@@ -6,4 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(include)
 
-add_executable(test_tensor src/test_tensor.cpp)
+add_executable(test_tensor 
+    src/test_tensor.cpp
+    src/tensor.cpp
+)
+
+# Automatically add all .cpp files in src
+# file(GLOB SOURCES "src/*.cpp")
+# add_executable(test_tensor ${SOURCES})
