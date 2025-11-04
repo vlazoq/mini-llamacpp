@@ -76,4 +76,4 @@ private: // Everything after this is only accessible inside the class
 
 }; // End of class - note the semicolon!
 
-#endif // End of header guard
+#endif // End of header guard.
