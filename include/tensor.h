@@ -62,6 +62,23 @@ public: // Everything after this is accessible from outside the class
     // Useful for debugging
     void print() const;
 
+    // ELEMENT-WISE OPERATIONS
+    // These operate on corresponding elements of two tensors
+    
+    // Add two tensors element-wise
+    // Example: [1,2] + [3,4] = [4,6]
+    // Tensors must have same shape
+    static Tensor add(const Tensor& a, const Tensor& b);
+    
+    // Multiply two tensors element-wise (Hadamard product)
+    // Example: [1,2] * [3,4] = [3,8]
+    // NOT matrix multiplication - that comes next
+    static Tensor multiply(const Tensor& a, const Tensor& b);
+    
+    // Multiply entire tensor by a scalar
+    // Example: [1,2,3] * 2.0 = [2,4,6]
+    static Tensor scale(const Tensor& t, float scalar);
+
 private: // Everything after this is only accessible inside the class
     // MEMBER VARIABLES: the actual data the tensor stores
 

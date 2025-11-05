@@ -130,3 +130,57 @@ void Tensor::print() const {
     
     std::cout << "]" << std::endl;  // Closing bracket
 }
+
+
+// Add two tensors element-wise
+// Both tensors must have identical shapes
+Tensor Tensor::add(const Tensor& a, const Tensor& b) {
+    // Validation: shapes must match
+    if (a.shape != b.shape) {
+        throw std::runtime_error("Cannot add tensors with different shapes");
+    }
+    
+    // Create result tensor with same shape as inputs
+    Tensor result(a.shape);
+    
+    // Add corresponding elements
+    // Since data is stored flat, we can just iterate through indices
+    for (int i = 0; i < a.total_size; i++) {
+        result.data[i] = a.data[i] + b.data[i];
+    }
+    
+    return result;
+}
+
+// Multiply two tensors element-wise (Hadamard product)
+// This is NOT matrix multiplication - just element-by-element multiplication
+Tensor Tensor::multiply(const Tensor& a, const Tensor& b) {
+    // Validation: shapes must match
+    if (a.shape != b.shape) {
+        throw std::runtime_error("Cannot multiply tensors with different shapes");
+    }
+    
+    // Create result tensor
+    Tensor result(a.shape);
+    
+    // Multiply corresponding elements
+    for (int i = 0; i < a.total_size; i++) {
+        result.data[i] = a.data[i] * b.data[i];
+    }
+    
+    return result;
+}
+
+// Multiply tensor by a scalar value
+// Every element gets multiplied by the same number
+Tensor Tensor::scale(const Tensor& t, float scalar) {
+    // Create result tensor with same shape
+    Tensor result(t.shape);
+    
+    // Scale each element
+    for (int i = 0; i < t.total_size; i++) {
+        result.data[i] = t.data[i] * scalar;
+    }
+    
+    return result;
+}
