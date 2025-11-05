@@ -232,3 +232,56 @@ Tensor Tensor::matmul(const Tensor& a, const Tensor& b) {
     
     return result;
 }
+
+// Transpose a 2D tensor (swap rows and columns)
+// If input is (m×n), output is (n×m)
+// Element at position [i][j] moves to position [j][i]
+Tensor Tensor::transpose(const Tensor& t) {
+    // Validation: must be 2D
+    if (t.shape.size() != 2) {
+        throw std::runtime_error("Transpose only works for 2D tensors");
+    }
+    
+    int rows = t.shape[0];
+    int cols = t.shape[1];
+    
+    // Create result with swapped dimensions
+    Tensor result({cols, rows});
+    
+    // Copy elements to transposed positions
+    // Original: A[i][j]
+    // Transposed: A^T[j][i] = A[i][j]
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            // Element at (i, j) in original goes to (j, i) in result
+            result.set(j, i, t.at(i, j));
+        }
+    }
+    
+    return result;
+}
+
+// Reshape tensor to new dimensions
+// Total number of elements must remain the same
+// Just changes how we interpret the flat data array
+Tensor Tensor::reshape(const Tensor& t, const std::vector<int>& new_shape) {
+    // Calculate total size of new shape
+    int new_total_size = 1;
+    for (int dim : new_shape) {
+        new_total_size *= dim;
+    }
+    
+    // Validation: total size must match
+    if (new_total_size != t.total_size) {
+        throw std::runtime_error(
+            "Cannot reshape: new shape has " + std::to_string(new_total_size) +
+            " elements, but tensor has " + std::to_string(t.total_size) + " elements"
+        );
+    }
+    
+    // Create new tensor with same data but different shape
+    // The data vector is copied, but we're just reinterpreting its layout
+    Tensor result(new_shape, t.data);
+    
+    return result;
+}

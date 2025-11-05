@@ -95,6 +95,24 @@ public: // Everything after this is accessible from outside the class
     //           [11,12]
     static Tensor matmul(const Tensor& a, const Tensor& b);
 
+    // UTILITY OPERATIONS
+    
+    // Transpose a 2D tensor (flip rows and columns)
+    // Example: [1, 2, 3]^T = [1, 4]
+    //          [4, 5, 6]      [2, 5]
+    //                         [3, 6]
+    // A (m×n) transposed becomes (n×m)
+    // Used extensively in attention: we need to transpose K for Q×K^T
+    static Tensor transpose(const Tensor& t);
+    
+    // Reshape tensor to new dimensions (must have same total size)
+    // Example: reshape([1,2,3,4,5,6], {3,2}) -> 3×2 matrix
+    // The data stays in the same order, just viewed with different shape
+    // Used for: converting between different tensor layouts
+    // 
+    // Note: new_shape total size must equal original total size
+    static Tensor reshape(const Tensor& t, const std::vector<int>& new_shape);
+
 private: // Everything after this is only accessible inside the class
     // MEMBER VARIABLES: the actual data the tensor stores
 

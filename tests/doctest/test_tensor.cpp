@@ -251,3 +251,110 @@ TEST_CASE("Matrix multiplication requires 2D tensors") {
     
     CHECK_THROWS(Tensor::matmul(a, b));
 }
+
+// ===== TRANSPOSE TESTS =====
+
+TEST_CASE("Transpose square matrix") {
+    // Transpose a 2×2 matrix
+    // [1, 2]^T   [1, 3]
+    // [3, 4]   = [2, 4]
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor b = Tensor::transpose(a);
+    
+    // Check shape is swapped
+    CHECK(b.get_shape()[0] == 2);
+    CHECK(b.get_shape()[1] == 2);
+    
+    // Check elements are transposed
+    CHECK(b.at(0, 0) == 1.0f);  // Was at (0,0), stays at (0,0)
+    CHECK(b.at(0, 1) == 3.0f);  // Was at (1,0), now at (0,1)
+    CHECK(b.at(1, 0) == 2.0f);  // Was at (0,1), now at (1,0)
+    CHECK(b.at(1, 1) == 4.0f);  // Was at (1,1), stays at (1,1)
+}
+
+TEST_CASE("Transpose rectangular matrix") {
+    // Transpose a 2×3 matrix to 3×2
+    // [1, 2, 3]^T   [1, 4]
+    // [4, 5, 6]   = [2, 5]
+    //               [3, 6]
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b = Tensor::transpose(a);
+    
+    // Check shape is swapped: 2×3 becomes 3×2
+    CHECK(b.get_shape()[0] == 3);
+    CHECK(b.get_shape()[1] == 2);
+    
+    // Check all elements
+    CHECK(b.at(0, 0) == 1.0f);
+    CHECK(b.at(0, 1) == 4.0f);
+    CHECK(b.at(1, 0) == 2.0f);
+    CHECK(b.at(1, 1) == 5.0f);
+    CHECK(b.at(2, 0) == 3.0f);
+    CHECK(b.at(2, 1) == 6.0f);
+}
+
+TEST_CASE("Double transpose returns original") {
+    // Property: (A^T)^T = A
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b = Tensor::transpose(a);
+    Tensor c = Tensor::transpose(b);
+    
+    // Should match original shape
+    CHECK(c.get_shape()[0] == 2);
+    CHECK(c.get_shape()[1] == 3);
+    
+    // Should match original values
+    CHECK(c.at(0, 0) == 1.0f);
+    CHECK(c.at(0, 2) == 3.0f);
+    CHECK(c.at(1, 1) == 5.0f);
+}
+
+// ===== RESHAPE TESTS =====
+
+TEST_CASE("Reshape to same size different dimensions") {
+    // Reshape 1×6 to 2×3
+    // [1, 2, 3, 4, 5, 6] -> [1, 2, 3]
+    //                        [4, 5, 6]
+    Tensor a({1, 6}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b = Tensor::reshape(a, {2, 3});
+    
+    // Check new shape
+    CHECK(b.get_shape()[0] == 2);
+    CHECK(b.get_shape()[1] == 3);
+    CHECK(b.get_total_size() == 6);
+    
+    // Data should be in same order
+    CHECK(b.at(0, 0) == 1.0f);
+    CHECK(b.at(0, 1) == 2.0f);
+    CHECK(b.at(0, 2) == 3.0f);
+    CHECK(b.at(1, 0) == 4.0f);
+    CHECK(b.at(1, 1) == 5.0f);
+    CHECK(b.at(1, 2) == 6.0f);
+}
+
+TEST_CASE("Reshape multiple ways") {
+    // Same data: [1,2,3,4,5,6] can be viewed as:
+    // 1×6, 2×3, 3×2, 6×1
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Reshape to 3×2
+    Tensor b = Tensor::reshape(a, {3, 2});
+    CHECK(b.get_shape()[0] == 3);
+    CHECK(b.get_shape()[1] == 2);
+    CHECK(b.at(0, 0) == 1.0f);
+    CHECK(b.at(2, 1) == 6.0f);
+    
+    // Reshape to 6×1
+    Tensor c = Tensor::reshape(a, {6, 1});
+    CHECK(c.get_shape()[0] == 6);
+    CHECK(c.get_shape()[1] == 1);
+    CHECK(c.at(5, 0) == 6.0f);
+}
+
+TEST_CASE("Reshape with wrong size should throw") {
+    // 6 elements cannot be reshaped to 2×2 (needs 4 elements)
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    CHECK_THROWS(Tensor::reshape(a, {2, 2}));  // 4 != 6
+    CHECK_THROWS(Tensor::reshape(a, {3, 3}));  // 9 != 6
+}

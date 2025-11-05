@@ -273,3 +273,111 @@ TEST(MatrixMultiplication, Requires2DTensors) {
     // Verification: Should require 2D tensors
     EXPECT_THROW(Tensor::matmul(a, b), std::runtime_error);
 }
+
+// ===== TRANSPOSE TESTS =====
+// Transpose swaps rows and columns - critical for attention mechanisms
+
+TEST(TensorUtilities, TransposeSquareMatrix) {
+    // Setup: 2×2 matrix
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Action: Transpose
+    Tensor b = Tensor::transpose(a);
+    
+    // Verification: Dimensions stay same for square matrix
+    EXPECT_EQ(b.get_shape()[0], 2);
+    EXPECT_EQ(b.get_shape()[1], 2);
+    
+    // Elements should be swapped across diagonal
+    EXPECT_FLOAT_EQ(b.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(b.at(0, 1), 3.0f);  // Was (1,0)
+    EXPECT_FLOAT_EQ(b.at(1, 0), 2.0f);  // Was (0,1)
+    EXPECT_FLOAT_EQ(b.at(1, 1), 4.0f);
+}
+
+TEST(TensorUtilities, TransposeRectangularMatrix) {
+    // Setup: 2×3 matrix
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Action: Transpose to 3×2
+    Tensor b = Tensor::transpose(a);
+    
+    // Verification: Dimensions should be swapped
+    EXPECT_EQ(b.get_shape()[0], 3);
+    EXPECT_EQ(b.get_shape()[1], 2);
+    
+    // Check transposed values
+    EXPECT_FLOAT_EQ(b.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(b.at(0, 1), 4.0f);
+    EXPECT_FLOAT_EQ(b.at(1, 0), 2.0f);
+    EXPECT_FLOAT_EQ(b.at(1, 1), 5.0f);
+    EXPECT_FLOAT_EQ(b.at(2, 0), 3.0f);
+    EXPECT_FLOAT_EQ(b.at(2, 1), 6.0f);
+}
+
+TEST(TensorUtilities, DoubleTransposeReturnsOriginal) {
+    // Setup: Test mathematical property (A^T)^T = A
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Action: Double transpose
+    Tensor b = Tensor::transpose(a);
+    Tensor c = Tensor::transpose(b);
+    
+    // Verification: Should match original
+    EXPECT_EQ(c.get_shape()[0], 2);
+    EXPECT_EQ(c.get_shape()[1], 3);
+    EXPECT_FLOAT_EQ(c.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(c.at(1, 2), 6.0f);
+}
+
+// ===== RESHAPE TESTS =====
+// Reshape reinterprets data with different dimensions (same total size)
+
+TEST(TensorUtilities, ReshapeSameSizeDifferentDimensions) {
+    // Setup: 1×6 matrix
+    Tensor a({1, 6}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Action: Reshape to 2×3
+    Tensor b = Tensor::reshape(a, {2, 3});
+    
+    // Verification: New shape, same data order
+    EXPECT_EQ(b.get_shape()[0], 2);
+    EXPECT_EQ(b.get_shape()[1], 3);
+    EXPECT_EQ(b.get_total_size(), 6);
+    
+    // Data order preserved
+    EXPECT_FLOAT_EQ(b.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(b.at(0, 2), 3.0f);
+    EXPECT_FLOAT_EQ(b.at(1, 0), 4.0f);
+    EXPECT_FLOAT_EQ(b.at(1, 2), 6.0f);
+}
+
+TEST(TensorUtilities, ReshapeMultipleWays) {
+    // Setup: 6 elements can be arranged multiple ways
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Action: Try different valid reshapes
+    Tensor b = Tensor::reshape(a, {3, 2});
+    Tensor c = Tensor::reshape(a, {6, 1});
+    Tensor d = Tensor::reshape(a, {1, 6});
+    
+    // Verification: All should have same total size
+    EXPECT_EQ(b.get_total_size(), 6);
+    EXPECT_EQ(c.get_total_size(), 6);
+    EXPECT_EQ(d.get_total_size(), 6);
+    
+    // Spot check values (data order preserved)
+    EXPECT_FLOAT_EQ(b.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(c.at(5, 0), 6.0f);
+    EXPECT_FLOAT_EQ(d.at(0, 5), 6.0f);
+}
+
+TEST(TensorUtilities, ReshapeWrongSizeThrows) {
+    // Setup: 6 elements
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    
+    // Verification: Invalid reshapes should throw
+    EXPECT_THROW(Tensor::reshape(a, {2, 2}), std::runtime_error);  // 4 != 6
+    EXPECT_THROW(Tensor::reshape(a, {3, 3}), std::runtime_error);  // 9 != 6
+    EXPECT_THROW(Tensor::reshape(a, {5, 1}), std::runtime_error);  // 5 != 6
+}
