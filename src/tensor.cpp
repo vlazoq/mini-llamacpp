@@ -184,3 +184,51 @@ Tensor Tensor::scale(const Tensor& t, float scalar) {
     
     return result;
 }
+
+// Matrix multiplication: A × B = C
+// A: m×n matrix, B: n×k matrix, Result: m×k matrix
+// Formula: C[i][j] = sum(A[i][l] * B[l][j]) for l=0 to n-1
+Tensor Tensor::matmul(const Tensor& a, const Tensor& b) {
+    // Validation: both must be 2D tensors
+    if (a.shape.size() != 2 || b.shape.size() != 2) {
+        throw std::runtime_error("Matrix multiplication requires 2D tensors");
+    }
+    
+    // Get dimensions
+    int m = a.shape[0];  // Number of rows in A
+    int n = a.shape[1];  // Number of columns in A / rows in B
+    int k = b.shape[1];  // Number of columns in B
+    
+    // Validation: inner dimensions must match
+    // A is (m×n), B is (n×k) - the 'n' must be the same
+    if (b.shape[0] != n) {
+        throw std::runtime_error(
+            "Matrix multiplication dimension mismatch: " + 
+            std::to_string(m) + "×" + std::to_string(n) + 
+            " cannot multiply with " + 
+            std::to_string(b.shape[0]) + "×" + std::to_string(k)
+        );
+    }
+    
+    // Create result tensor with shape (m×k)
+    Tensor result({m, k});
+    
+    // Triple nested loop - the classic matmul algorithm
+    // Outer loop: iterate through rows of A
+    for (int i = 0; i < m; i++) {
+        // Middle loop: iterate through columns of B
+        for (int j = 0; j < k; j++) {
+            // Inner loop: compute dot product of row i of A with column j of B
+            float sum = 0.0f;
+            for (int l = 0; l < n; l++) {
+                // A[i][l] * B[l][j]
+                // We use at() for clarity, but direct data access would be faster
+                sum += a.at(i, l) * b.at(l, j);
+            }
+            // Store the result
+            result.set(i, j, sum);
+        }
+    }
+    
+    return result;
+}

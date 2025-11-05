@@ -183,3 +183,93 @@ TEST_F(TensorFixture, ExampleFixtureTest) {
     // We'll use this pattern more in later phases
     SUCCEED();  // Always passes - placeholder
 }
+
+// ===== MATRIX MULTIPLICATION TESTS =====
+// Matrix multiplication is the foundation of neural network computation
+
+TEST(MatrixMultiplication, Basic2x2) {
+    // Setup: Two 2×2 matrices
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor b({2, 2}, {5.0, 6.0, 7.0, 8.0});
+    
+    // Action: Multiply them
+    Tensor c = Tensor::matmul(a, b);
+    
+    // Verification: Check shape and values
+    // Expected: [19, 22]
+    //           [43, 50]
+    EXPECT_EQ(c.get_shape()[0], 2);
+    EXPECT_EQ(c.get_shape()[1], 2);
+    EXPECT_FLOAT_EQ(c.at(0, 0), 19.0f);   // 1*5 + 2*7
+    EXPECT_FLOAT_EQ(c.at(0, 1), 22.0f);   // 1*6 + 2*8
+    EXPECT_FLOAT_EQ(c.at(1, 0), 43.0f);   // 3*5 + 4*7
+    EXPECT_FLOAT_EQ(c.at(1, 1), 50.0f);   // 3*6 + 4*8
+}
+
+TEST(MatrixMultiplication, DifferentDimensions) {
+    // Setup: (2×3) × (3×2) should give (2×2)
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b({3, 2}, {7.0, 8.0, 9.0, 10.0, 11.0, 12.0});
+    
+    // Action
+    Tensor c = Tensor::matmul(a, b);
+    
+    // Verification
+    EXPECT_EQ(c.get_shape()[0], 2);
+    EXPECT_EQ(c.get_shape()[1], 2);
+    EXPECT_FLOAT_EQ(c.at(0, 0), 58.0f);    // 1*7 + 2*9 + 3*11
+    EXPECT_FLOAT_EQ(c.at(0, 1), 64.0f);    // 1*8 + 2*10 + 3*12
+    EXPECT_FLOAT_EQ(c.at(1, 0), 139.0f);   // 4*7 + 5*9 + 6*11
+    EXPECT_FLOAT_EQ(c.at(1, 1), 154.0f);   // 4*8 + 5*10 + 6*12
+}
+
+TEST(MatrixMultiplication, IdentityMatrix) {
+    // Setup: Test with identity matrix
+    // Property: A × I = A for any matrix A
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor identity({2, 2}, {1.0, 0.0, 0.0, 1.0});
+    
+    // Action
+    Tensor result = Tensor::matmul(a, identity);
+    
+    // Verification: Should equal original matrix
+    EXPECT_FLOAT_EQ(result.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(result.at(0, 1), 2.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 0), 3.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 1), 4.0f);
+}
+
+TEST(MatrixMultiplication, ZeroMatrix) {
+    // Setup: Test with zero matrix
+    // Property: A × 0 = 0 for any matrix A
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor zeros({2, 2}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Action
+    Tensor result = Tensor::matmul(a, zeros);
+    
+    // Verification: All zeros
+    EXPECT_FLOAT_EQ(result.at(0, 0), 0.0f);
+    EXPECT_FLOAT_EQ(result.at(0, 1), 0.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 0), 0.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 1), 0.0f);
+}
+
+TEST(MatrixMultiplication, DimensionMismatch) {
+    // Setup: Incompatible dimensions
+    // (2×3) cannot multiply (2×2) - inner dimensions don't match
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Verification: Should throw error
+    EXPECT_THROW(Tensor::matmul(a, b), std::runtime_error);
+}
+
+TEST(MatrixMultiplication, Requires2DTensors) {
+    // Setup: Try with non-2D tensor
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor b({4}, {1.0, 2.0, 3.0, 4.0});  // 1D vector
+    
+    // Verification: Should require 2D tensors
+    EXPECT_THROW(Tensor::matmul(a, b), std::runtime_error);
+}

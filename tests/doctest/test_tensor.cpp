@@ -158,3 +158,96 @@ TEST_CASE("Tensor operations with mismatched shapes should throw") {
     CHECK_THROWS(Tensor::add(a, b));
     CHECK_THROWS(Tensor::multiply(a, b));
 }
+
+// ===== MATRIX MULTIPLICATION TESTS =====
+
+TEST_CASE("Matrix multiplication basic 2x2") {
+    // Simple 2x2 × 2x2 test
+    // [1, 2]   [5, 6]
+    // [3, 4] × [7, 8]
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor b({2, 2}, {5.0, 6.0, 7.0, 8.0});
+    
+    Tensor c = Tensor::matmul(a, b);
+    
+    // Expected result:
+    // [1*5+2*7, 1*6+2*8]   [19, 22]
+    // [3*5+4*7, 3*6+4*8] = [43, 50]
+    CHECK(c.get_shape()[0] == 2);
+    CHECK(c.get_shape()[1] == 2);
+    CHECK(c.at(0, 0) == 19.0f);
+    CHECK(c.at(0, 1) == 22.0f);
+    CHECK(c.at(1, 0) == 43.0f);
+    CHECK(c.at(1, 1) == 50.0f);
+}
+
+TEST_CASE("Matrix multiplication with different dimensions") {
+    // Test (2×3) × (3×2) = (2×2)
+    // [1, 2, 3]   [7,  8]
+    // [4, 5, 6] × [9, 10]
+    //             [11,12]
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b({3, 2}, {7.0, 8.0, 9.0, 10.0, 11.0, 12.0});
+    
+    Tensor c = Tensor::matmul(a, b);
+    
+    // Result should be 2×2
+    CHECK(c.get_shape()[0] == 2);
+    CHECK(c.get_shape()[1] == 2);
+    
+    // Calculate expected values:
+    // c[0][0] = 1*7 + 2*9 + 3*11 = 7 + 18 + 33 = 58
+    // c[0][1] = 1*8 + 2*10 + 3*12 = 8 + 20 + 36 = 64
+    // c[1][0] = 4*7 + 5*9 + 6*11 = 28 + 45 + 66 = 139
+    // c[1][1] = 4*8 + 5*10 + 6*12 = 32 + 50 + 72 = 154
+    CHECK(c.at(0, 0) == 58.0f);
+    CHECK(c.at(0, 1) == 64.0f);
+    CHECK(c.at(1, 0) == 139.0f);
+    CHECK(c.at(1, 1) == 154.0f);
+}
+
+TEST_CASE("Matrix multiplication identity") {
+    // Any matrix × identity matrix = original matrix
+    // [1, 2]   [1, 0]   [1, 2]
+    // [3, 4] × [0, 1] = [3, 4]
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor identity({2, 2}, {1.0, 0.0, 0.0, 1.0});
+    
+    Tensor result = Tensor::matmul(a, identity);
+    
+    // Should equal original matrix
+    CHECK(result.at(0, 0) == 1.0f);
+    CHECK(result.at(0, 1) == 2.0f);
+    CHECK(result.at(1, 0) == 3.0f);
+    CHECK(result.at(1, 1) == 4.0f);
+}
+
+TEST_CASE("Matrix multiplication with zeros") {
+    // Any matrix × zero matrix = zero matrix
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor zeros({2, 2}, {0.0, 0.0, 0.0, 0.0});
+    
+    Tensor result = Tensor::matmul(a, zeros);
+    
+    // All results should be zero
+    CHECK(result.at(0, 0) == 0.0f);
+    CHECK(result.at(0, 1) == 0.0f);
+    CHECK(result.at(1, 0) == 0.0f);
+    CHECK(result.at(1, 1) == 0.0f);
+}
+
+TEST_CASE("Matrix multiplication dimension mismatch should throw") {
+    // (2×3) cannot multiply with (2×2) because inner dimensions don't match
+    Tensor a({2, 3}, {1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+    Tensor b({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    
+    CHECK_THROWS(Tensor::matmul(a, b));
+}
+
+TEST_CASE("Matrix multiplication requires 2D tensors") {
+    // Can't do matmul with non-2D tensors (we'll handle this later for batches)
+    Tensor a({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor b({4}, {1.0, 2.0, 3.0, 4.0});  // 1D tensor
+    
+    CHECK_THROWS(Tensor::matmul(a, b));
+}

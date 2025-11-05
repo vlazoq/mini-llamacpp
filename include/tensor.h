@@ -79,6 +79,22 @@ public: // Everything after this is accessible from outside the class
     // Example: [1,2,3] * 2.0 = [2,4,6]
     static Tensor scale(const Tensor& t, float scalar);
 
+    // MATRIX MULTIPLICATION
+    // Performs standard matrix multiplication: A × B = C
+    // A must be (m×n), B must be (n×k), result will be (m×k)
+    // 
+    // This is THE most important operation in neural networks:
+    // - Used in attention mechanisms (Q×K, attention×V)
+    // - Used in feed-forward layers (input×weights)
+    // - Used in embeddings lookups
+    // - Accounts for 90%+ of LLM computation time
+    //
+    // Example: [2×3] × [3×2] = [2×2]
+    // [1,2,3]   [7, 8]    [1*7+2*9+3*11, 1*8+2*10+3*12]   [58, 64]
+    // [4,5,6] × [9,10] =  [4*7+5*9+6*11, 4*8+5*10+6*12] = [139,154]
+    //           [11,12]
+    static Tensor matmul(const Tensor& a, const Tensor& b);
+
 private: // Everything after this is only accessible inside the class
     // MEMBER VARIABLES: the actual data the tensor stores
 
