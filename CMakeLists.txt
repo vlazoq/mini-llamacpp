@@ -13,9 +13,6 @@ set(SOURCES
     src/tensor.cpp
 )
 
-# Main executable (add later)
-# add_executable(mini-llama ${SOURCES} src/main.cpp)
-
 
 # ===== DOCTEST TESTS =====
 add_executable(test_doctest 
@@ -51,3 +48,11 @@ enable_testing()
 # Register both test suites
 add_test(NAME DoctestSuite COMMAND test_doctest)
 add_test(NAME GtestSuite COMMAND test_gtest)
+
+# Main executable (add later)
+# add_executable(mini-llama ${SOURCES} src/main.cpp)
+
+# Phase 1 Demo
+# add_executable(phase1_demo
+#    ${SOURCES}
+#    src/phase1_demo.cpp)
