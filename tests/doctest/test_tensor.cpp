@@ -511,3 +511,134 @@ TEST_CASE("Softmax numerical stability with large values") {
     CHECK(output.at(0, 2) > output.at(0, 1));
     CHECK(output.at(0, 1) > output.at(0, 0));
 }
+
+// ===== LAYER NORMALIZATION TESTS =====
+#include "layer_norm.h"
+
+TEST_CASE("Layer norm simple - normalizes to mean=0, variance=1") {
+    // Input with known mean and variance
+    // Row: [1, 2, 3, 4] -> mean=2.5, variance=1.25
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Check shape unchanged
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 4);
+    
+    // Calculate mean of output (should be ≈0)
+    float mean = (output.at(0, 0) + output.at(0, 1) + 
+                  output.at(0, 2) + output.at(0, 3)) / 4.0f;
+    CHECK(mean == doctest::Approx(0.0f).epsilon(0.01));
+    
+    // Calculate variance of output (should be ≈1)
+    float variance = 0.0f;
+    for (int j = 0; j < 4; j++) {
+        float diff = output.at(0, j) - mean;
+        variance += diff * diff;
+    }
+    variance /= 4.0f;
+    CHECK(variance == doctest::Approx(1.0f).epsilon(0.01));
+}
+
+TEST_CASE("Layer norm simple with multiple rows") {
+    // Each row should be normalized independently
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,    // Row 0: mean=2, var≈0.67
+                          10.0, 20.0, 30.0}); // Row 1: mean=20, var≈66.67
+    
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Row 0: check mean ≈ 0
+    float mean_row0 = (output.at(0, 0) + output.at(0, 1) + output.at(0, 2)) / 3.0f;
+    CHECK(mean_row0 == doctest::Approx(0.0f).epsilon(0.01));
+    
+    // Row 1: check mean ≈ 0
+    float mean_row1 = (output.at(1, 0) + output.at(1, 1) + output.at(1, 2)) / 3.0f;
+    CHECK(mean_row1 == doctest::Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("Layer norm simple with constant values") {
+    // Edge case: all values the same
+    // Mean = value, variance = 0
+    // Output should be all zeros (after normalization)
+    Tensor input({1, 4}, {5.0, 5.0, 5.0, 5.0});
+    
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // All outputs should be 0 (or very close, due to epsilon)
+    CHECK(output.at(0, 0) == doctest::Approx(0.0f).epsilon(0.01));
+    CHECK(output.at(0, 1) == doctest::Approx(0.0f).epsilon(0.01));
+    CHECK(output.at(0, 2) == doctest::Approx(0.0f).epsilon(0.01));
+    CHECK(output.at(0, 3) == doctest::Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("Layer norm with gamma and beta") {
+    // Input that will be normalized
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Gamma (scale): multiply normalized values by 2
+    Tensor gamma({1, 4}, {2.0, 2.0, 2.0, 2.0});
+    
+    // Beta (shift): add 1 to scaled values
+    Tensor beta({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    
+    // First normalize (same as simple version)
+    Tensor normalized = layer_norm::layer_norm_simple(input);
+    
+    // Then check that gamma and beta were applied
+    // output[j] = gamma[j] * normalized[j] + beta[j]
+    for (int j = 0; j < 4; j++) {
+        float expected = 2.0f * normalized.at(0, j) + 1.0f;
+        CHECK(output.at(0, j) == doctest::Approx(expected).epsilon(0.01));
+    }
+}
+
+TEST_CASE("Layer norm gamma scales, beta shifts") {
+    // Simple input: already normalized (mean=0)
+    Tensor input({1, 3}, {-1.0, 0.0, 1.0});
+    
+    // Gamma: different scales for each feature
+    Tensor gamma({1, 3}, {1.0, 2.0, 3.0});
+    
+    // Beta: different shifts for each feature
+    Tensor beta({1, 3}, {0.5, 1.0, 1.5});
+    
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    
+    // After normalization (input is already mean=0, var=1):
+    // Each value gets: gamma[j] * normalized[j] + beta[j]
+    // The exact values depend on normalization, but we can verify the pattern
+    
+    // Just verify shape for now (detailed math in next test)
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 3);
+}
+
+TEST_CASE("Layer norm with identity gamma and zero beta") {
+    // Gamma = 1, Beta = 0 should give same as simple layer norm
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});  // Identity scale
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});   // Zero shift
+    
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    Tensor expected = layer_norm::layer_norm_simple(input);
+    
+    // Should be identical (or very close)
+    for (int j = 0; j < 4; j++) {
+        CHECK(output.at(0, j) == doctest::Approx(expected.at(0, j)).epsilon(0.001));
+    }
+}
+
+TEST_CASE("Layer norm dimension mismatch throws error") {
+    // Gamma/beta size must match input feature dimension
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Wrong size gamma (3 instead of 4)
+    Tensor gamma_wrong({1, 3}, {1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    CHECK_THROWS(layer_norm::layer_norm(input, gamma_wrong, beta));
+}

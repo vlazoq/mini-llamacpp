@@ -12,6 +12,7 @@ include_directories(external)  # For doctest.h and gtest
 set(SOURCES
     src/tensor.cpp
     src/activations.cpp
+    src/layer_norm.cpp
 )
 
 

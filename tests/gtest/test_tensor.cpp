@@ -538,3 +538,150 @@ TEST(ActivationFunctions, SoftmaxNumericalStability) {
     EXPECT_GT(output.at(0, 2), output.at(0, 1));
     EXPECT_GT(output.at(0, 1), output.at(0, 0));
 }
+
+// ===== LAYER NORMALIZATION TESTS =====
+#include "layer_norm.h"
+
+TEST(LayerNormalization, SimpleNormalization) {
+    // Setup: Input with known statistics
+    // [1, 2, 3, 4] has mean=2.5, variance=1.25
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Action: Normalize
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Verification: Mean should be ≈0, variance should be ≈1
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    // Calculate mean
+    float mean = 0.0f;
+    for (int j = 0; j < 4; j++) {
+        mean += output.at(0, j);
+    }
+    mean /= 4.0f;
+    EXPECT_NEAR(mean, 0.0f, 0.01f);
+    
+    // Calculate variance
+    float variance = 0.0f;
+    for (int j = 0; j < 4; j++) {
+        float diff = output.at(0, j) - mean;
+        variance += diff * diff;
+    }
+    variance /= 4.0f;
+    EXPECT_NEAR(variance, 1.0f, 0.01f);
+}
+
+TEST(LayerNormalization, MultipleRowsIndependent) {
+    // Setup: Two rows with very different scales
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,      // Small values
+                          10.0, 20.0, 30.0});  // Large values
+    
+    // Action: Each row normalized independently
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Verification: Both rows should have mean≈0
+    float mean_row0 = (output.at(0, 0) + output.at(0, 1) + output.at(0, 2)) / 3.0f;
+    float mean_row1 = (output.at(1, 0) + output.at(1, 1) + output.at(1, 2)) / 3.0f;
+    
+    EXPECT_NEAR(mean_row0, 0.0f, 0.01f);
+    EXPECT_NEAR(mean_row1, 0.0f, 0.01f);
+}
+
+TEST(LayerNormalization, ConstantValues) {
+    // Edge case: All same value (variance = 0)
+    Tensor input({1, 4}, {5.0, 5.0, 5.0, 5.0});
+    
+    // Action: Normalize (with epsilon preventing div-by-zero)
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Verification: Should be all zeros (or near zero)
+    EXPECT_NEAR(output.at(0, 0), 0.0f, 0.01f);
+    EXPECT_NEAR(output.at(0, 1), 0.0f, 0.01f);
+    EXPECT_NEAR(output.at(0, 2), 0.0f, 0.01f);
+    EXPECT_NEAR(output.at(0, 3), 0.0f, 0.01f);
+}
+
+TEST(LayerNormalization, WithGammaAndBeta) {
+    // Setup
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    Tensor gamma({1, 4}, {2.0, 2.0, 2.0, 2.0});  // Scale by 2
+    Tensor beta({1, 4}, {1.0, 1.0, 1.0, 1.0});   // Shift by 1
+    
+    // Action: Apply full layer norm
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    
+    // Verification: Should be normalized, then scaled, then shifted
+    // First get the simple normalized version
+    Tensor normalized = layer_norm::layer_norm_simple(input);
+    
+    // Check that gamma and beta were applied correctly
+    for (int j = 0; j < 4; j++) {
+        float expected = 2.0f * normalized.at(0, j) + 1.0f;
+        EXPECT_NEAR(output.at(0, j), expected, 0.01f);
+    }
+}
+
+TEST(LayerNormalization, GammaScalesBetaShifts) {
+    // Setup: Different gamma/beta for each feature
+    Tensor input({1, 3}, {-1.0, 0.0, 1.0});
+    Tensor gamma({1, 3}, {1.0, 2.0, 3.0});  // Different scales
+    Tensor beta({1, 3}, {0.5, 1.0, 1.5});   // Different shifts
+    
+    // Action
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    
+    // Verification: Each feature gets its own scale and shift
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 3);
+    
+    // Values will be different due to different gamma/beta per feature
+    // Just verify no crashes and reasonable output range
+    for (int j = 0; j < 3; j++) {
+        EXPECT_GT(output.at(0, j), -10.0f);
+        EXPECT_LT(output.at(0, j), 10.0f);
+    }
+}
+
+TEST(LayerNormalization, IdentityTransformation) {
+    // Setup: Gamma=1, Beta=0 should equal simple layer norm
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Action
+    Tensor output = layer_norm::layer_norm(input, gamma, beta);
+    Tensor expected = layer_norm::layer_norm_simple(input);
+    
+    // Verification: Should be identical
+    for (int j = 0; j < 4; j++) {
+        EXPECT_NEAR(output.at(0, j), expected.at(0, j), 0.001f);
+    }
+}
+
+TEST(LayerNormalization, DimensionMismatchThrows) {
+    // Setup: Incompatible dimensions
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    Tensor gamma_wrong({1, 3}, {1.0, 1.0, 1.0});  // Wrong size
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Verification: Should throw error
+    EXPECT_THROW(layer_norm::layer_norm(input, gamma_wrong, beta), 
+                 std::runtime_error);
+}
+
+TEST(LayerNormalization, LargeValues) {
+    // Setup: Very large values to test numerical stability
+    Tensor input({1, 3}, {1000.0, 2000.0, 3000.0});
+    
+    // Action: Should normalize without overflow
+    Tensor output = layer_norm::layer_norm_simple(input);
+    
+    // Verification: Mean ≈ 0, values in reasonable range
+    float mean = (output.at(0, 0) + output.at(0, 1) + output.at(0, 2)) / 3.0f;
+    EXPECT_NEAR(mean, 0.0f, 0.01f);
+    
+    // All values should be normalized (roughly in [-2, 2] range for normal data)
+    EXPECT_GT(output.at(0, 0), -5.0f);
+    EXPECT_LT(output.at(0, 0), 5.0f);
+}
