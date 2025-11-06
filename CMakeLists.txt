@@ -13,6 +13,7 @@ set(SOURCES
     src/tensor.cpp
     src/activations.cpp
     src/layer_norm.cpp
+    src/embeddings.cpp
 )
 
 
