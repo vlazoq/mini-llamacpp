@@ -358,3 +358,156 @@ TEST_CASE("Reshape with wrong size should throw") {
     CHECK_THROWS(Tensor::reshape(a, {2, 2}));  // 4 != 6
     CHECK_THROWS(Tensor::reshape(a, {3, 3}));  // 9 != 6
 }
+
+// ===== ACTIVATION FUNCTIONS TESTS =====
+#include "activations.h"
+
+TEST_CASE("ReLU activation function") {
+    // ReLU zeros out negative values, keeps positive ones
+    Tensor input({2, 3}, {-2.0, -1.0, 0.0, 1.0, 2.0, 3.0});
+    
+    Tensor output = activations::relu(input);
+    
+    // Check shape unchanged
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 3);
+    
+    // Check values: negatives -> 0, positives unchanged
+    CHECK(output.at(0, 0) == 0.0f);   // -2 -> 0
+    CHECK(output.at(0, 1) == 0.0f);   // -1 -> 0
+    CHECK(output.at(0, 2) == 0.0f);   //  0 -> 0
+    CHECK(output.at(1, 0) == 1.0f);   //  1 -> 1
+    CHECK(output.at(1, 1) == 2.0f);   //  2 -> 2
+    CHECK(output.at(1, 2) == 3.0f);   //  3 -> 3
+}
+
+TEST_CASE("ReLU with all negative values") {
+    // Edge case: all values should become zero
+    Tensor input({2, 2}, {-5.0, -3.0, -1.0, -0.5});
+    Tensor output = activations::relu(input);
+    
+    CHECK(output.at(0, 0) == 0.0f);
+    CHECK(output.at(0, 1) == 0.0f);
+    CHECK(output.at(1, 0) == 0.0f);
+    CHECK(output.at(1, 1) == 0.0f);
+}
+
+TEST_CASE("ReLU with all positive values") {
+    // Edge case: all values should remain unchanged
+    Tensor input({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor output = activations::relu(input);
+    
+    CHECK(output.at(0, 0) == 1.0f);
+    CHECK(output.at(0, 1) == 2.0f);
+    CHECK(output.at(1, 0) == 3.0f);
+    CHECK(output.at(1, 1) == 4.0f);
+}
+
+TEST_CASE("GELU activation function") {
+    // GELU is smooth, approximately:
+    // - Large negative -> ~0
+    // - Zero -> 0
+    // - Large positive -> ~x
+    Tensor input({1, 5}, {-2.0, -1.0, 0.0, 1.0, 2.0});
+    
+    Tensor output = activations::gelu(input);
+    
+    // Check shape
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 5);
+    
+    // GELU(-2) should be close to 0 (small negative)
+    CHECK(output.at(0, 0) < 0.0f);
+    CHECK(output.at(0, 0) > -0.1f);
+    
+    // GELU(0) = 0
+    CHECK(output.at(0, 2) == doctest::Approx(0.0f).epsilon(0.01));
+    
+    // GELU(1) ≈ 0.84
+    CHECK(output.at(0, 3) == doctest::Approx(0.84f).epsilon(0.01));
+    
+    // GELU(2) ≈ 1.95 (close to 2)
+    CHECK(output.at(0, 4) == doctest::Approx(1.95f).epsilon(0.01));
+}
+
+TEST_CASE("GELU is smooth (no sharp corners like ReLU)") {
+    // Test that GELU transitions smoothly through zero
+    // Unlike ReLU which has a sharp corner at 0
+    Tensor input({1, 3}, {-0.1, 0.0, 0.1});
+    Tensor output = activations::gelu(input);
+    
+    // All three values should be small but non-zero (except exactly 0)
+    // This shows smoothness
+    CHECK(output.at(0, 0) < 0.0f);  // Negative but small
+    CHECK(output.at(0, 2) > 0.0f);  // Positive but small
+}
+
+TEST_CASE("Softmax creates probability distribution") {
+    // Softmax should: sum to 1, all positive, larger inputs get more weight
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    Tensor output = activations::softmax(input);
+    
+    // Check shape
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 4);
+    
+    // All values should be positive
+    CHECK(output.at(0, 0) > 0.0f);
+    CHECK(output.at(0, 1) > 0.0f);
+    CHECK(output.at(0, 2) > 0.0f);
+    CHECK(output.at(0, 3) > 0.0f);
+    
+    // Sum should be 1.0
+    float sum = output.at(0, 0) + output.at(0, 1) + output.at(0, 2) + output.at(0, 3);
+    CHECK(sum == doctest::Approx(1.0f).epsilon(0.001));
+    
+    // Larger inputs should get more weight
+    CHECK(output.at(0, 3) > output.at(0, 2));  // 4 > 3
+    CHECK(output.at(0, 2) > output.at(0, 1));  // 3 > 2
+    CHECK(output.at(0, 1) > output.at(0, 0));  // 2 > 1
+}
+
+TEST_CASE("Softmax with multiple rows (independent distributions)") {
+    // Each row should be its own probability distribution
+    Tensor input({2, 3}, {1.0, 2.0, 3.0, 
+                          4.0, 5.0, 6.0});
+    
+    Tensor output = activations::softmax(input);
+    
+    // Row 0 should sum to 1
+    float sum_row0 = output.at(0, 0) + output.at(0, 1) + output.at(0, 2);
+    CHECK(sum_row0 == doctest::Approx(1.0f).epsilon(0.001));
+    
+    // Row 1 should sum to 1
+    float sum_row1 = output.at(1, 0) + output.at(1, 1) + output.at(1, 2);
+    CHECK(sum_row1 == doctest::Approx(1.0f).epsilon(0.001));
+}
+
+TEST_CASE("Softmax with equal values gives uniform distribution") {
+    // If all inputs are equal, output should be uniform (equal probabilities)
+    Tensor input({1, 4}, {2.0, 2.0, 2.0, 2.0});
+    
+    Tensor output = activations::softmax(input);
+    
+    // All should be 0.25 (1/4)
+    CHECK(output.at(0, 0) == doctest::Approx(0.25f).epsilon(0.001));
+    CHECK(output.at(0, 1) == doctest::Approx(0.25f).epsilon(0.001));
+    CHECK(output.at(0, 2) == doctest::Approx(0.25f).epsilon(0.001));
+    CHECK(output.at(0, 3) == doctest::Approx(0.25f).epsilon(0.001));
+}
+
+TEST_CASE("Softmax numerical stability with large values") {
+    // This would overflow without the max subtraction trick
+    Tensor input({1, 3}, {1000.0, 1001.0, 1002.0});
+    
+    Tensor output = activations::softmax(input);
+    
+    // Should still work and sum to 1
+    float sum = output.at(0, 0) + output.at(0, 1) + output.at(0, 2);
+    CHECK(sum == doctest::Approx(1.0f).epsilon(0.001));
+    
+    // Largest value should dominate
+    CHECK(output.at(0, 2) > output.at(0, 1));
+    CHECK(output.at(0, 1) > output.at(0, 0));
+}

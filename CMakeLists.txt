@@ -11,6 +11,7 @@ include_directories(external)  # For doctest.h and gtest
 # Source files (our library)
 set(SOURCES
     src/tensor.cpp
+    src/activations.cpp
 )
 
 

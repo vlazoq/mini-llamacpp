@@ -3,6 +3,11 @@
 #include <cmath>      // For exp, tanh, erf
 #include <stdexcept>
 
+// M_PI is not standard C++, so define it if not available
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace activations {
 
 // ReLU: max(0, x)
@@ -34,7 +39,7 @@ Tensor gelu(const Tensor& x) {
     std::vector<float> result_data(x.get_total_size());
     
     // Constants for GELU approximation
-    const float sqrt_2_over_pi = std::sqrt(2.0f / M_PI);  // √(2/π) ≈ 0.797
+    const float sqrt_2_over_pi = std::sqrt(2.0f / M_PI);  // √(2/π) ≈ 0.797 - but use M_PI in case I need to update precision later on.
     const float coeff = 0.044715f;
     
     // Apply GELU element-wise

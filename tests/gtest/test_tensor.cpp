@@ -381,3 +381,160 @@ TEST(TensorUtilities, ReshapeWrongSizeThrows) {
     EXPECT_THROW(Tensor::reshape(a, {3, 3}), std::runtime_error);  // 9 != 6
     EXPECT_THROW(Tensor::reshape(a, {5, 1}), std::runtime_error);  // 5 != 6
 }
+
+// ===== ACTIVATION FUNCTIONS TESTS =====
+#include "activations.h"
+
+// ReLU Tests
+TEST(ActivationFunctions, ReLUBasic) {
+    // Setup: Mix of negative, zero, and positive values
+    Tensor input({2, 3}, {-2.0, -1.0, 0.0, 1.0, 2.0, 3.0});
+    
+    // Action: Apply ReLU
+    Tensor output = activations::relu(input);
+    
+    // Verification: Negatives become 0, positives unchanged
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 3);
+    EXPECT_FLOAT_EQ(output.at(0, 0), 0.0f);  // -2 -> 0
+    EXPECT_FLOAT_EQ(output.at(0, 1), 0.0f);  // -1 -> 0
+    EXPECT_FLOAT_EQ(output.at(0, 2), 0.0f);  //  0 -> 0
+    EXPECT_FLOAT_EQ(output.at(1, 0), 1.0f);  //  1 -> 1
+    EXPECT_FLOAT_EQ(output.at(1, 1), 2.0f);  //  2 -> 2
+    EXPECT_FLOAT_EQ(output.at(1, 2), 3.0f);  //  3 -> 3
+}
+
+TEST(ActivationFunctions, ReLUAllNegative) {
+    // Edge case: all negative values
+    Tensor input({2, 2}, {-5.0, -3.0, -1.0, -0.5});
+    Tensor output = activations::relu(input);
+    
+    // All should become zero
+    EXPECT_FLOAT_EQ(output.at(0, 0), 0.0f);
+    EXPECT_FLOAT_EQ(output.at(0, 1), 0.0f);
+    EXPECT_FLOAT_EQ(output.at(1, 0), 0.0f);
+    EXPECT_FLOAT_EQ(output.at(1, 1), 0.0f);
+}
+
+TEST(ActivationFunctions, ReLUAllPositive) {
+    // Edge case: all positive values
+    Tensor input({2, 2}, {1.0, 2.0, 3.0, 4.0});
+    Tensor output = activations::relu(input);
+    
+    // All should remain unchanged
+    EXPECT_FLOAT_EQ(output.at(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(output.at(0, 1), 2.0f);
+    EXPECT_FLOAT_EQ(output.at(1, 0), 3.0f);
+    EXPECT_FLOAT_EQ(output.at(1, 1), 4.0f);
+}
+
+// GELU Tests
+TEST(ActivationFunctions, GELUBasic) {
+    // Setup: Range of values to show GELU behavior
+    Tensor input({1, 5}, {-2.0, -1.0, 0.0, 1.0, 2.0});
+    
+    // Action: Apply GELU
+    Tensor output = activations::gelu(input);
+    
+    // Verification: Check expected approximate values
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 5);
+    
+    // GELU(-2) ≈ -0.05 (small negative, almost zero)
+    EXPECT_LT(output.at(0, 0), 0.0f);
+    EXPECT_GT(output.at(0, 0), -0.1f);
+    
+    // GELU(0) = 0
+    EXPECT_NEAR(output.at(0, 2), 0.0f, 0.01f);
+    
+    // GELU(1) ≈ 0.84
+    EXPECT_NEAR(output.at(0, 3), 0.84f, 0.01f);
+    
+    // GELU(2) ≈ 1.95
+    EXPECT_NEAR(output.at(0, 4), 1.95f, 0.01f);
+}
+
+TEST(ActivationFunctions, GELUSmoothness) {
+    // Test that GELU is smooth around zero (no sharp corner)
+    Tensor input({1, 3}, {-0.1, 0.0, 0.1});
+    Tensor output = activations::gelu(input);
+    
+    // Should transition smoothly (all small values, no discontinuity)
+    EXPECT_LT(output.at(0, 0), 0.0f);  // Negative
+    EXPECT_NEAR(output.at(0, 1), 0.0f, 0.001f);  // Zero
+    EXPECT_GT(output.at(0, 2), 0.0f);  // Positive
+}
+
+// Softmax Tests
+TEST(ActivationFunctions, SoftmaxProbabilityDistribution) {
+    // Setup: Simple increasing sequence
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    // Action: Apply softmax
+    Tensor output = activations::softmax(input);
+    
+    // Verification: Creates valid probability distribution
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    // All values positive
+    EXPECT_GT(output.at(0, 0), 0.0f);
+    EXPECT_GT(output.at(0, 1), 0.0f);
+    EXPECT_GT(output.at(0, 2), 0.0f);
+    EXPECT_GT(output.at(0, 3), 0.0f);
+    
+    // Sum to 1.0
+    float sum = output.at(0, 0) + output.at(0, 1) + output.at(0, 2) + output.at(0, 3);
+    EXPECT_NEAR(sum, 1.0f, 0.001f);
+    
+    // Monotonic: larger inputs get larger probabilities
+    EXPECT_GT(output.at(0, 3), output.at(0, 2));
+    EXPECT_GT(output.at(0, 2), output.at(0, 1));
+    EXPECT_GT(output.at(0, 1), output.at(0, 0));
+}
+
+TEST(ActivationFunctions, SoftmaxMultipleRows) {
+    // Setup: 2 rows, each should get independent distribution
+    Tensor input({2, 3}, {1.0, 2.0, 3.0, 
+                          4.0, 5.0, 6.0});
+    
+    // Action
+    Tensor output = activations::softmax(input);
+    
+    // Verification: Each row sums to 1 independently
+    float sum_row0 = output.at(0, 0) + output.at(0, 1) + output.at(0, 2);
+    float sum_row1 = output.at(1, 0) + output.at(1, 1) + output.at(1, 2);
+    
+    EXPECT_NEAR(sum_row0, 1.0f, 0.001f);
+    EXPECT_NEAR(sum_row1, 1.0f, 0.001f);
+}
+
+TEST(ActivationFunctions, SoftmaxUniformInput) {
+    // Setup: All equal values
+    Tensor input({1, 4}, {2.0, 2.0, 2.0, 2.0});
+    
+    // Action
+    Tensor output = activations::softmax(input);
+    
+    // Verification: Should give uniform distribution (all 0.25)
+    EXPECT_NEAR(output.at(0, 0), 0.25f, 0.001f);
+    EXPECT_NEAR(output.at(0, 1), 0.25f, 0.001f);
+    EXPECT_NEAR(output.at(0, 2), 0.25f, 0.001f);
+    EXPECT_NEAR(output.at(0, 3), 0.25f, 0.001f);
+}
+
+TEST(ActivationFunctions, SoftmaxNumericalStability) {
+    // Setup: Large values that would overflow without stability trick
+    Tensor input({1, 3}, {1000.0, 1001.0, 1002.0});
+    
+    // Action: Should not overflow
+    Tensor output = activations::softmax(input);
+    
+    // Verification: Still produces valid distribution
+    float sum = output.at(0, 0) + output.at(0, 1) + output.at(0, 2);
+    EXPECT_NEAR(sum, 1.0f, 0.001f);
+    
+    // Largest input should still dominate
+    EXPECT_GT(output.at(0, 2), output.at(0, 1));
+    EXPECT_GT(output.at(0, 1), output.at(0, 0));
+}
