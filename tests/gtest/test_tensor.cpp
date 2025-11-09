@@ -685,3 +685,121 @@ TEST(LayerNormalization, LargeValues) {
     EXPECT_GT(output.at(0, 0), -5.0f);
     EXPECT_LT(output.at(0, 0), 5.0f);
 }
+
+// ===== EMBEDDINGS TESTS =====
+#include "embeddings.h"
+
+TEST(Embeddings, TokenEmbeddingBasicLookup) {
+    // Setup: Small vocabulary with 3D embeddings
+    Tensor embedding_table({5, 3}, {
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12,
+        13, 14, 15
+    });
+    
+    // Action: Look up tokens
+    std::vector<int> token_ids = {1, 3};
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    // Verification
+    EXPECT_EQ(result.get_shape()[0], 2);
+    EXPECT_EQ(result.get_shape()[1], 3);
+    
+    EXPECT_FLOAT_EQ(result.at(0, 0), 4.0f);
+    EXPECT_FLOAT_EQ(result.at(0, 1), 5.0f);
+    EXPECT_FLOAT_EQ(result.at(0, 2), 6.0f);
+    
+    EXPECT_FLOAT_EQ(result.at(1, 0), 10.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 1), 11.0f);
+    EXPECT_FLOAT_EQ(result.at(1, 2), 12.0f);
+}
+
+TEST(Embeddings, TokenEmbeddingSingleToken) {
+    Tensor embedding_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    
+    std::vector<int> token_ids = {2};
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    EXPECT_EQ(result.get_shape()[0], 1);
+    EXPECT_EQ(result.get_shape()[1], 2);
+    EXPECT_FLOAT_EQ(result.at(0, 0), 5.0f);
+    EXPECT_FLOAT_EQ(result.at(0, 1), 6.0f);
+}
+
+TEST(Embeddings, TokenEmbeddingRepeatedTokens) {
+    Tensor embedding_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    
+    std::vector<int> token_ids = {1, 1, 1};
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    EXPECT_EQ(result.get_shape()[0], 3);
+    for (int i = 0; i < 3; i++) {
+        EXPECT_FLOAT_EQ(result.at(i, 0), 3.0f);
+        EXPECT_FLOAT_EQ(result.at(i, 1), 4.0f);
+    }
+}
+
+TEST(Embeddings, TokenEmbeddingOutOfRangeThrows) {
+    Tensor embedding_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    std::vector<int> token_ids = {5};
+    
+    EXPECT_THROW(embeddings::token_embedding(embedding_table, token_ids), 
+                 std::runtime_error);
+}
+
+TEST(Embeddings, PositionalEmbeddingBasic) {
+    Tensor position_table({4, 2}, {
+        0.1, 0.2,
+        0.3, 0.4,
+        0.5, 0.6,
+        0.7, 0.8
+    });
+    
+    int sequence_length = 3;
+    Tensor result = embeddings::positional_embedding(position_table, sequence_length);
+    
+    EXPECT_EQ(result.get_shape()[0], 3);
+    EXPECT_EQ(result.get_shape()[1], 2);
+    
+    EXPECT_FLOAT_EQ(result.at(0, 0), 0.1f);
+    EXPECT_FLOAT_EQ(result.at(1, 0), 0.3f);
+    EXPECT_FLOAT_EQ(result.at(2, 0), 0.5f);
+}
+
+TEST(Embeddings, PositionalEmbeddingTooLongThrows) {
+    Tensor position_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    
+    EXPECT_THROW(embeddings::positional_embedding(position_table, 5), 
+                 std::runtime_error);
+}
+
+TEST(Embeddings, CombinedEmbedding) {
+    // Setup
+    Tensor token_table({3, 2}, {
+        1, 2,
+        3, 4,
+        5, 6
+    });
+    
+    Tensor position_table({3, 2}, {
+        0.1, 0.2,
+        0.3, 0.4,
+        0.5, 0.6
+    });
+    
+    std::vector<int> token_ids = {0, 2};
+    
+    // Action
+    Tensor result = embeddings::combined_embedding(token_table, position_table, token_ids);
+    
+    // Verification: token + position at each position
+    EXPECT_EQ(result.get_shape()[0], 2);
+    EXPECT_EQ(result.get_shape()[1], 2);
+    
+    EXPECT_NEAR(result.at(0, 0), 1.1f, 0.001f);
+    EXPECT_NEAR(result.at(0, 1), 2.2f, 0.001f);
+    EXPECT_NEAR(result.at(1, 0), 5.3f, 0.001f);
+    EXPECT_NEAR(result.at(1, 1), 6.4f, 0.001f);
+}

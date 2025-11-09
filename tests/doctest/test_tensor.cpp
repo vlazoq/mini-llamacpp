@@ -642,3 +642,145 @@ TEST_CASE("Layer norm dimension mismatch throws error") {
     
     CHECK_THROWS(layer_norm::layer_norm(input, gamma_wrong, beta));
 }
+
+// ===== EMBEDDINGS TESTS =====
+#include "embeddings.h"
+
+TEST_CASE("Token embedding basic lookup") {
+    // Create a small embedding table: 5 tokens, 3 dimensions each
+    // Token 0: [1, 2, 3]
+    // Token 1: [4, 5, 6]
+    // Token 2: [7, 8, 9]
+    // Token 3: [10, 11, 12]
+    // Token 4: [13, 14, 15]
+    Tensor embedding_table({5, 3}, {
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12,
+        13, 14, 15
+    });
+    
+    // Look up tokens [1, 3]
+    std::vector<int> token_ids = {1, 3};
+    
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    // Should return (2 × 3) tensor with the embeddings for tokens 1 and 3
+    CHECK(result.get_shape()[0] == 2);
+    CHECK(result.get_shape()[1] == 3);
+    
+    // Token 1 embedding: [4, 5, 6]
+    CHECK(result.at(0, 0) == 4.0f);
+    CHECK(result.at(0, 1) == 5.0f);
+    CHECK(result.at(0, 2) == 6.0f);
+    
+    // Token 3 embedding: [10, 11, 12]
+    CHECK(result.at(1, 0) == 10.0f);
+    CHECK(result.at(1, 1) == 11.0f);
+    CHECK(result.at(1, 2) == 12.0f);
+}
+
+TEST_CASE("Token embedding with single token") {
+    Tensor embedding_table({3, 2}, {
+        1, 2,
+        3, 4,
+        5, 6
+    });
+    
+    std::vector<int> token_ids = {2};
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    CHECK(result.get_shape()[0] == 1);
+    CHECK(result.get_shape()[1] == 2);
+    CHECK(result.at(0, 0) == 5.0f);
+    CHECK(result.at(0, 1) == 6.0f);
+}
+
+TEST_CASE("Token embedding with repeated tokens") {
+    Tensor embedding_table({3, 2}, {
+        1, 2,
+        3, 4,
+        5, 6
+    });
+    
+    // Same token twice
+    std::vector<int> token_ids = {1, 1};
+    Tensor result = embeddings::token_embedding(embedding_table, token_ids);
+    
+    // Should get the same embedding twice
+    CHECK(result.at(0, 0) == 3.0f);
+    CHECK(result.at(0, 1) == 4.0f);
+    CHECK(result.at(1, 0) == 3.0f);
+    CHECK(result.at(1, 1) == 4.0f);
+}
+
+TEST_CASE("Token embedding out of range throws") {
+    Tensor embedding_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    
+    std::vector<int> token_ids = {5};  // Only have tokens 0-2
+    CHECK_THROWS(embeddings::token_embedding(embedding_table, token_ids));
+}
+
+TEST_CASE("Positional embedding basic") {
+    // Position table: 4 positions, 2 dimensions
+    Tensor position_table({4, 2}, {
+        0.1, 0.2,   // Position 0
+        0.3, 0.4,   // Position 1
+        0.5, 0.6,   // Position 2
+        0.7, 0.8    // Position 3
+    });
+    
+    // Get embeddings for 3 positions
+    int sequence_length = 3;
+    Tensor result = embeddings::positional_embedding(position_table, sequence_length);
+    
+    CHECK(result.get_shape()[0] == 3);
+    CHECK(result.get_shape()[1] == 2);
+    
+    // Should return positions 0, 1, 2
+    CHECK(result.at(0, 0) == 0.1f);
+    CHECK(result.at(0, 1) == 0.2f);
+    CHECK(result.at(1, 0) == 0.3f);
+    CHECK(result.at(1, 1) == 0.4f);
+    CHECK(result.at(2, 0) == 0.5f);
+    CHECK(result.at(2, 1) == 0.6f);
+}
+
+TEST_CASE("Positional embedding sequence too long throws") {
+    Tensor position_table({3, 2}, {1, 2, 3, 4, 5, 6});
+    
+    CHECK_THROWS(embeddings::positional_embedding(position_table, 5));
+}
+
+TEST_CASE("Combined embedding adds token and position") {
+    // Token table: 3 tokens, 2 dims
+    Tensor token_table({3, 2}, {
+        1, 2,    // Token 0
+        3, 4,    // Token 1
+        5, 6     // Token 2
+    });
+    
+    // Position table: 3 positions, 2 dims
+    Tensor position_table({3, 2}, {
+        0.1, 0.2,  // Position 0
+        0.3, 0.4,  // Position 1
+        0.5, 0.6   // Position 2
+    });
+    
+    // Tokens [0, 2]
+    std::vector<int> token_ids = {0, 2};
+    
+    Tensor result = embeddings::combined_embedding(token_table, position_table, token_ids);
+    
+    CHECK(result.get_shape()[0] == 2);
+    CHECK(result.get_shape()[1] == 2);
+    
+    // Position 0: token[0] + position[0] = [1,2] + [0.1,0.2] = [1.1, 2.2]
+    CHECK(result.at(0, 0) == doctest::Approx(1.1f));
+    CHECK(result.at(0, 1) == doctest::Approx(2.2f));
+    
+    // Position 1: token[2] + position[1] = [5,6] + [0.3,0.4] = [5.3, 6.4]
+    CHECK(result.at(1, 0) == doctest::Approx(5.3f));
+    CHECK(result.at(1, 1) == doctest::Approx(6.4f));
+}
