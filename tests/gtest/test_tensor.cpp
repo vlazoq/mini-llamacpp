@@ -803,3 +803,188 @@ TEST(Embeddings, CombinedEmbedding) {
     EXPECT_NEAR(result.at(1, 0), 5.3f, 0.001f);
     EXPECT_NEAR(result.at(1, 1), 6.4f, 0.001f);
 }
+
+// ===== ATTENTION MECHANISM TESTS =====
+#include "attention.h"
+
+TEST(Attention, ScaledDotProductBasic) {
+    // Setup: Simple Q, K, V
+    Tensor Q({2, 3}, {1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0});
+    
+    Tensor K({2, 3}, {1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0});
+    
+    Tensor V({2, 3}, {1.0, 2.0, 3.0,
+                      4.0, 5.0, 6.0});
+    
+    // Action
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 3);
+    
+    // Check output is in reasonable range
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 3; j++) {
+            EXPECT_GE(output.at(i, j), 0.0f);
+            EXPECT_LE(output.at(i, j), 10.0f);
+        }
+    }
+}
+
+TEST(Attention, SelfAttentionPattern) {
+    // Setup: Q = K means each query is most similar to itself
+    Tensor Q({2, 2}, {1.0, 0.0,
+                      0.0, 1.0});
+    
+    Tensor K({2, 2}, {1.0, 0.0,
+                      0.0, 1.0});
+    
+    Tensor V({2, 2}, {10.0, 20.0,
+                      30.0, 40.0});
+    
+    // Action
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // Verification: Output should be close to V (self-attention)
+    EXPECT_GE(output.at(0, 0), 5.0f);
+    EXPECT_GE(output.at(0, 1), 10.0f);
+    EXPECT_GE(output.at(1, 0), 15.0f);
+    EXPECT_GE(output.at(1, 1), 20.0f);
+}
+
+TEST(Attention, DimensionMismatchThrows) {
+    // Setup: Incompatible dimensions
+    Tensor Q({2, 3}, {1, 2, 3, 4, 5, 6});
+    Tensor K({2, 4}, {1, 2, 3, 4, 5, 6, 7, 8});
+    Tensor V({2, 3}, {1, 2, 3, 4, 5, 6});
+    
+    // Verification
+    EXPECT_THROW(attention::scaled_dot_product_attention(Q, K, V), 
+                 std::runtime_error);
+}
+
+TEST(Attention, SingleTokenSequence) {
+    // Edge case: Only one token
+    Tensor Q({1, 2}, {1.0, 2.0});
+    Tensor K({1, 2}, {3.0, 4.0});
+    Tensor V({1, 2}, {5.0, 6.0});
+    
+    // Action
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // Verification: With one token, output = V
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 2);
+    EXPECT_NEAR(output.at(0, 0), 5.0f, 0.01f);
+    EXPECT_NEAR(output.at(0, 1), 6.0f, 0.01f);
+}
+
+TEST(Attention, MultiHeadBasic) {
+    // Setup
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    // Identity weight matrices
+    Tensor W({4, 4}, {1, 0, 0, 0,
+                      0, 1, 0, 0,
+                      0, 0, 1, 0,
+                      0, 0, 0, 1});
+    
+    int num_heads = 2;
+    
+    // Action
+    Tensor output = attention::multi_head_attention(input, W, W, W, W, num_heads);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    // Check all values are finite and reasonable
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+            EXPECT_GE(output.at(i, j), -100.0f);
+            EXPECT_LE(output.at(i, j), 100.0f);
+        }
+    }
+}
+
+TEST(Attention, MultiHeadDivisionValidation) {
+    // Setup: 5 dimensions, 2 heads (doesn't divide evenly)
+    Tensor input({2, 5}, {1, 2, 3, 4, 5,
+                          6, 7, 8, 9, 10});
+    
+    Tensor W({5, 5}, {1, 0, 0, 0, 0,
+                      0, 1, 0, 0, 0,
+                      0, 0, 1, 0, 0,
+                      0, 0, 0, 1, 0,
+                      0, 0, 0, 0, 1});
+    
+    int num_heads = 2;
+    
+    // Verification: Should throw
+    EXPECT_THROW(attention::multi_head_attention(input, W, W, W, W, num_heads),
+                 std::runtime_error);
+}
+
+TEST(Attention, MultiHeadSingleHead) {
+    // Setup: 1 head should work
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    Tensor W({4, 4}, {1, 0, 0, 0,
+                      0, 1, 0, 0,
+                      0, 0, 1, 0,
+                      0, 0, 0, 1});
+    
+    int num_heads = 1;
+    
+    // Action
+    Tensor output = attention::multi_head_attention(input, W, W, W, W, num_heads);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+        }
+    }
+}
+
+TEST(Attention, MultiHeadMultipleHeads) {
+    // Setup: 4 tokens, 8 dims, 4 heads
+    Tensor input({4, 8}, {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31, 32
+    });
+    
+    // 8×8 identity matrix
+    std::vector<float> w_data(64, 0.0f);
+    for (int i = 0; i < 8; i++) {
+        w_data[i * 8 + i] = 1.0f;
+    }
+    
+    Tensor W({8, 8}, w_data);
+    
+    int num_heads = 4;
+    
+    // Action
+    Tensor output = attention::multi_head_attention(input, W, W, W, W, num_heads);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 4);
+    EXPECT_EQ(output.get_shape()[1], 8);
+    
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 8; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+        }
+    }
+}

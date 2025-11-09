@@ -14,6 +14,7 @@ set(SOURCES
     src/activations.cpp
     src/layer_norm.cpp
     src/embeddings.cpp
+    src/attention.cpp
 )
 
 

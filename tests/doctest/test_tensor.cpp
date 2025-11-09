@@ -784,3 +784,201 @@ TEST_CASE("Combined embedding adds token and position") {
     CHECK(result.at(1, 0) == doctest::Approx(5.3f));
     CHECK(result.at(1, 1) == doctest::Approx(6.4f));
 }
+
+// ===== ATTENTION MECHANISM TESTS =====
+#include "attention.h"
+
+TEST_CASE("Scaled dot-product attention basic") {
+    // Simple case: 2 tokens, 3 dimensions
+    // Q, K, V are all the same for simplicity
+    Tensor Q({2, 3}, {1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0});
+    
+    Tensor K({2, 3}, {1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0});
+    
+    Tensor V({2, 3}, {1.0, 2.0, 3.0,
+                      4.0, 5.0, 6.0});
+    
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // Check shape: should be (2 × 3) - same as input
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 3);
+    
+    // Output should be a weighted combination of V rows
+    // Exact values depend on softmax of attention scores
+    // Just verify reasonable output range
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 3; j++) {
+            CHECK(output.at(i, j) >= 0.0f);
+            CHECK(output.at(i, j) <= 10.0f);
+        }
+    }
+}
+
+TEST_CASE("Attention with identical Q and K focuses on self") {
+    // When Q = K, each query is most similar to itself
+    Tensor Q({2, 2}, {1.0, 0.0,
+                      0.0, 1.0});
+    
+    Tensor K({2, 2}, {1.0, 0.0,
+                      0.0, 1.0});
+    
+    // Different values to see what gets attended
+    Tensor V({2, 2}, {10.0, 20.0,
+                      30.0, 40.0});
+    
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // Each position should attend mostly to itself
+    // So output should be close to V
+    // (Not exactly equal due to softmax spreading attention)
+    CHECK(output.at(0, 0) >= 5.0f);   // Close to V[0,0]=10
+    CHECK(output.at(0, 1) >= 10.0f);  // Close to V[0,1]=20
+    CHECK(output.at(1, 0) >= 15.0f);  // Close to V[1,0]=30
+    CHECK(output.at(1, 1) >= 20.0f);  // Close to V[1,1]=40
+}
+
+TEST_CASE("Attention dimension validation") {
+    // Mismatched dimensions should throw
+    Tensor Q({2, 3}, {1, 2, 3, 4, 5, 6});
+    Tensor K({2, 4}, {1, 2, 3, 4, 5, 6, 7, 8});  // Wrong dimension
+    Tensor V({2, 3}, {1, 2, 3, 4, 5, 6});
+    
+    CHECK_THROWS(attention::scaled_dot_product_attention(Q, K, V));
+}
+
+TEST_CASE("Attention with single token") {
+    // Edge case: sequence length = 1
+    Tensor Q({1, 2}, {1.0, 2.0});
+    Tensor K({1, 2}, {3.0, 4.0});
+    Tensor V({1, 2}, {5.0, 6.0});
+    
+    Tensor output = attention::scaled_dot_product_attention(Q, K, V);
+    
+    // With only one token, attention weight = 1.0
+    // Output should equal V
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 2);
+    CHECK(output.at(0, 0) == doctest::Approx(5.0f).epsilon(0.01));
+    CHECK(output.at(0, 1) == doctest::Approx(6.0f).epsilon(0.01));
+}
+
+TEST_CASE("Multi-head attention basic") {
+    // Simple case: 2 tokens, 4 dimensions, 2 heads
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    // Identity-like weight matrices (simplified)
+    Tensor Wq({4, 4}, {1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1});
+    
+    Tensor Wk({4, 4}, {1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1});
+    
+    Tensor Wv({4, 4}, {1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1});
+    
+    Tensor Wo({4, 4}, {1, 0, 0, 0,
+                       0, 1, 0, 0,
+                       0, 0, 1, 0,
+                       0, 0, 0, 1});
+    
+    int num_heads = 2;
+    
+    Tensor output = attention::multi_head_attention(input, Wq, Wk, Wv, Wo, num_heads);
+    
+    // Check shape preserved
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 4);
+    
+    // Output should be reasonable (not NaN, not extreme)
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            CHECK(std::isfinite(output.at(i, j)));
+            CHECK(output.at(i, j) >= -100.0f);
+            CHECK(output.at(i, j) <= 100.0f);
+        }
+    }
+}
+
+TEST_CASE("Multi-head attention num_heads must divide embedding_dim") {
+    Tensor input({2, 5}, {1, 2, 3, 4, 5,
+                          6, 7, 8, 9, 10});
+    
+    Tensor W({5, 5}, {1, 0, 0, 0, 0,
+                      0, 1, 0, 0, 0,
+                      0, 0, 1, 0, 0,
+                      0, 0, 0, 1, 0,
+                      0, 0, 0, 0, 1});
+    
+    // 5 dimensions with 2 heads doesn't divide evenly
+    int num_heads = 2;
+    
+    CHECK_THROWS(attention::multi_head_attention(input, W, W, W, W, num_heads));
+}
+
+TEST_CASE("Multi-head attention with 1 head equals single attention") {
+    // With 1 head, multi-head should behave similar to single attention
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    // Identity matrices
+    Tensor W({4, 4}, {1, 0, 0, 0,
+                      0, 1, 0, 0,
+                      0, 0, 1, 0,
+                      0, 0, 0, 1});
+    
+    int num_heads = 1;
+    
+    Tensor output = attention::multi_head_attention(input, W, W, W, W, num_heads);
+    
+    // Should produce valid output
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 4);
+    
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            CHECK(std::isfinite(output.at(i, j)));
+        }
+    }
+}
+
+TEST_CASE("Multi-head attention with 4 heads") {
+    // 4 tokens, 8 dimensions, 4 heads (2 dims per head)
+    Tensor input({4, 8}, {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31, 32
+    });
+    
+    // Create 8×8 identity-ish matrices
+    std::vector<float> w_data(64, 0.0f);
+    for (int i = 0; i < 8; i++) {
+        w_data[i * 8 + i] = 1.0f;
+    }
+    
+    Tensor W({8, 8}, w_data);
+    
+    int num_heads = 4;
+    
+    Tensor output = attention::multi_head_attention(input, W, W, W, W, num_heads);
+    
+    // Verify shape and validity
+    CHECK(output.get_shape()[0] == 4);
+    CHECK(output.get_shape()[1] == 8);
+    
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 8; j++) {
+            CHECK(std::isfinite(output.at(i, j)));
+        }
+    }
+}
