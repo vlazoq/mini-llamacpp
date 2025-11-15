@@ -982,3 +982,158 @@ TEST_CASE("Multi-head attention with 4 heads") {
         }
     }
 }
+
+// ===== FEEDFORWARD NETWORK TESTS =====
+#include "feedforward.h"
+
+TEST_CASE("Feedforward network basic") {
+    // Simple case: 2 tokens, 4 embedding dims, 8 intermediate dims
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    // W1: 4×8 (expand)
+    std::vector<float> w1_data(32, 0.1f);  // Fill with 0.1 for simplicity
+    Tensor W1({4, 8}, w1_data);
+    
+    // b1: 1×8
+    Tensor b1({1, 8}, {0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1});
+    
+    // W2: 8×4 (contract back)
+    std::vector<float> w2_data(32, 0.1f);
+    Tensor W2({8, 4}, w2_data);
+    
+    // b2: 1×4
+    Tensor b2({1, 4}, {0.1, 0.1, 0.1, 0.1});
+    
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Check shape: should match input shape
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 4);
+    
+    // Output should be finite and reasonable
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            CHECK(std::isfinite(output.at(i, j)));
+            CHECK(output.at(i, j) >= -100.0f);
+            CHECK(output.at(i, j) <= 100.0f);
+        }
+    }
+}
+
+TEST_CASE("Feedforward with identity-like weights") {
+    // Test with weights that approximately preserve input
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,
+                          4.0, 5.0, 6.0});
+    
+    // W1: (3 × 6) - expand from 3 to 6 dimensions
+    // Small weights to keep output in reasonable range
+    Tensor W1({3, 6}, {
+        0.1, 0, 0, 0, 0, 0,      // Row 0
+        0, 0.1, 0, 0, 0, 0,      // Row 1
+        0, 0, 0.1, 0, 0, 0       // Row 2
+    });
+    
+    Tensor b1({1, 6}, {0, 0, 0, 0, 0, 0});
+    
+    // W2: (6 × 3) - contract back from 6 to 3 dimensions
+    Tensor W2({6, 3}, {
+        1, 0, 0,   // Row 0
+        0, 1, 0,   // Row 1
+        0, 0, 1,   // Row 2
+        0, 0, 0,   // Row 3
+        0, 0, 0,   // Row 4
+        0, 0, 0    // Row 5
+    });
+    
+    Tensor b2({1, 3}, {0, 0, 0});
+    
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Shape should match
+    CHECK(output.get_shape()[0] == 2);
+    CHECK(output.get_shape()[1] == 3);
+    
+    // With small weights and zero bias, output should be small
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 3; j++) {
+            CHECK(std::abs(output.at(i, j)) < 10.0f);
+        }
+    }
+}
+
+TEST_CASE("Feedforward with single token") {
+    // Edge case: sequence length = 1
+    Tensor input({1, 2}, {1.0, 2.0});
+    
+    Tensor W1({2, 4}, {0.1, 0.2, 0.3, 0.4,
+                       0.5, 0.6, 0.7, 0.8});
+    Tensor b1({1, 4}, {0.1, 0.1, 0.1, 0.1});
+    
+    Tensor W2({4, 2}, {0.1, 0.2,
+                       0.3, 0.4,
+                       0.5, 0.6,
+                       0.7, 0.8});
+    Tensor b2({1, 2}, {0.1, 0.1});
+    
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 2);
+    CHECK(std::isfinite(output.at(0, 0)));
+    CHECK(std::isfinite(output.at(0, 1)));
+}
+
+TEST_CASE("Feedforward bias effect") {
+    // Test that bias is actually added
+    Tensor input({1, 2}, {0.0, 0.0});  // Zero input
+    
+    Tensor W1({2, 2}, {0, 0, 0, 0});   // Zero weights
+    Tensor b1({1, 2}, {5.0, 10.0});    // Non-zero bias
+    
+    Tensor W2({2, 2}, {1, 0, 0, 1});   // Identity
+    Tensor b2({1, 2}, {1.0, 2.0});     // Non-zero bias
+    
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // With zero input and weights, output depends only on biases
+    // After GELU(b1) passed through W2 (identity) and added b2
+    // Output should be non-zero due to biases
+    CHECK(output.at(0, 0) != 0.0f);
+    CHECK(output.at(0, 1) != 0.0f);
+}
+
+TEST_CASE("Feedforward dimension validation") {
+    // Wrong dimensions should throw
+    Tensor input({2, 4}, {1, 2, 3, 4, 5, 6, 7, 8});
+    
+    // W1 has wrong input dimension
+    Tensor W1_wrong({3, 8}, {1, 2, 3, 4, 5, 6, 7, 8,
+                             9, 10, 11, 12, 13, 14, 15, 16,
+                             17, 18, 19, 20, 21, 22, 23, 24});
+    
+    Tensor b1({1, 8}, {0, 0, 0, 0, 0, 0, 0, 0});
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, {0, 0, 0, 0});
+    
+    CHECK_THROWS(feedforward::feedforward(input, W1_wrong, b1, W2, b2));
+}
+
+TEST_CASE("Feedforward processes tokens independently") {
+    // Each token should be processed the same way
+    // Test by duplicating a token
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,
+                          1.0, 2.0, 3.0});  // Same token twice
+    
+    Tensor W1({3, 6}, std::vector<float>(18, 0.1f));
+    Tensor b1({1, 6}, {0, 0, 0, 0, 0, 0});
+    Tensor W2({6, 3}, std::vector<float>(18, 0.1f));
+    Tensor b2({1, 3}, {0, 0, 0});
+    
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Both rows should be identical (same input → same output)
+    CHECK(output.at(0, 0) == doctest::Approx(output.at(1, 0)).epsilon(0.001));
+    CHECK(output.at(0, 1) == doctest::Approx(output.at(1, 1)).epsilon(0.001));
+    CHECK(output.at(0, 2) == doctest::Approx(output.at(1, 2)).epsilon(0.001));
+}

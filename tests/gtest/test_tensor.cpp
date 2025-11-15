@@ -988,3 +988,180 @@ TEST(Attention, MultiHeadMultipleHeads) {
         }
     }
 }
+
+// ===== FEEDFORWARD NETWORK TESTS =====
+#include "feedforward.h"
+
+TEST(FeedforwardNetwork, BasicFunctionality) {
+    // Setup: 2 tokens, 4→8→4 dimensions
+    Tensor input({2, 4}, {1.0, 2.0, 3.0, 4.0,
+                          5.0, 6.0, 7.0, 8.0});
+    
+    std::vector<float> w1_data(32, 0.1f);
+    Tensor W1({4, 8}, w1_data);
+    Tensor b1({1, 8}, {0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1});
+    
+    std::vector<float> w2_data(32, 0.1f);
+    Tensor W2({8, 4}, w2_data);
+    Tensor b2({1, 4}, {0.1, 0.1, 0.1, 0.1});
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+            EXPECT_GE(output.at(i, j), -100.0f);
+            EXPECT_LE(output.at(i, j), 100.0f);
+        }
+    }
+}
+
+TEST(FeedforwardNetwork, IdentityLikeWeights) {
+    // Setup: Weights that approximately preserve input
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,
+                          4.0, 5.0, 6.0});
+    
+    // W1: (3 × 6) - 18 elements total
+    Tensor W1({3, 6}, {
+        0.1, 0, 0, 0, 0, 0,      // Row 0
+        0, 0.1, 0, 0, 0, 0,      // Row 1
+        0, 0, 0.1, 0, 0, 0       // Row 2
+    });
+    
+    Tensor b1({1, 6}, {0, 0, 0, 0, 0, 0});
+    
+    // W2: (6 × 3) - 18 elements total
+    Tensor W2({6, 3}, {
+        1, 0, 0,   // Row 0
+        0, 1, 0,   // Row 1
+        0, 0, 1,   // Row 2
+        0, 0, 0,   // Row 3
+        0, 0, 0,   // Row 4
+        0, 0, 0    // Row 5
+    });
+    
+    Tensor b2({1, 3}, {0, 0, 0});
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 2);
+    EXPECT_EQ(output.get_shape()[1], 3);
+    
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 3; j++) {
+            EXPECT_LT(std::abs(output.at(i, j)), 10.0f);
+        }
+    }
+}
+
+TEST(FeedforwardNetwork, SingleToken) {
+    // Edge case: single token
+    Tensor input({1, 2}, {1.0, 2.0});
+    
+    Tensor W1({2, 4}, {0.1, 0.2, 0.3, 0.4,
+                       0.5, 0.6, 0.7, 0.8});
+    Tensor b1({1, 4}, {0.1, 0.1, 0.1, 0.1});
+    
+    Tensor W2({4, 2}, {0.1, 0.2,
+                       0.3, 0.4,
+                       0.5, 0.6,
+                       0.7, 0.8});
+    Tensor b2({1, 2}, {0.1, 0.1});
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 2);
+    EXPECT_TRUE(std::isfinite(output.at(0, 0)));
+    EXPECT_TRUE(std::isfinite(output.at(0, 1)));
+}
+
+TEST(FeedforwardNetwork, BiasEffect) {
+    // Test that biases are actually applied
+    Tensor input({1, 2}, {0.0, 0.0});
+    
+    Tensor W1({2, 2}, {0, 0, 0, 0});
+    Tensor b1({1, 2}, {5.0, 10.0});
+    
+    Tensor W2({2, 2}, {1, 0, 0, 1});
+    Tensor b2({1, 2}, {1.0, 2.0});
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification: Output should be non-zero (bias effect)
+    EXPECT_NE(output.at(0, 0), 0.0f);
+    EXPECT_NE(output.at(0, 1), 0.0f);
+}
+
+TEST(FeedforwardNetwork, DimensionValidation) {
+    // Setup: Wrong dimensions
+    Tensor input({2, 4}, {1, 2, 3, 4, 5, 6, 7, 8});
+    
+    Tensor W1_wrong({3, 8}, {1, 2, 3, 4, 5, 6, 7, 8,
+                             9, 10, 11, 12, 13, 14, 15, 16,
+                             17, 18, 19, 20, 21, 22, 23, 24});
+    
+    Tensor b1({1, 8}, {0, 0, 0, 0, 0, 0, 0, 0});
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, {0, 0, 0, 0});
+    
+    // Verification: Should throw
+    EXPECT_THROW(feedforward::feedforward(input, W1_wrong, b1, W2, b2),
+                 std::runtime_error);
+}
+
+TEST(FeedforwardNetwork, IndependentTokenProcessing) {
+    // Setup: Duplicate token to verify independence
+    Tensor input({2, 3}, {1.0, 2.0, 3.0,
+                          1.0, 2.0, 3.0});
+    
+    Tensor W1({3, 6}, std::vector<float>(18, 0.1f));
+    Tensor b1({1, 6}, {0, 0, 0, 0, 0, 0});
+    Tensor W2({6, 3}, std::vector<float>(18, 0.1f));
+    Tensor b2({1, 3}, {0, 0, 0});
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification: Same input → same output
+    EXPECT_NEAR(output.at(0, 0), output.at(1, 0), 0.001f);
+    EXPECT_NEAR(output.at(0, 1), output.at(1, 1), 0.001f);
+    EXPECT_NEAR(output.at(0, 2), output.at(1, 2), 0.001f);
+}
+
+TEST(FeedforwardNetwork, LargeIntermediateDimension) {
+    // Test typical transformer expansion ratio (4×)
+    Tensor input({3, 4}, {1, 2, 3, 4,
+                          5, 6, 7, 8,
+                          9, 10, 11, 12});
+    
+    int intermediate_dim = 16;  // 4× expansion
+    
+    Tensor W1({4, 16}, std::vector<float>(64, 0.05f));
+    Tensor b1({1, 16}, std::vector<float>(16, 0.0f));
+    Tensor W2({16, 4}, std::vector<float>(64, 0.05f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    // Action
+    Tensor output = feedforward::feedforward(input, W1, b1, W2, b2);
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 3);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 4; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+        }
+    }
+}

@@ -16,6 +16,7 @@ set(SOURCES
     src/embeddings.cpp
     src/attention.cpp
     src/feedforward.cpp
+    src/transformer_block.cpp
 )
 
 
