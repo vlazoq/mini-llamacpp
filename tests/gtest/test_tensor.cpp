@@ -1687,3 +1687,199 @@ TEST(Sampling, ErrorHandling) {
     EXPECT_THROW(sampling::sample_top_p(logits, 0.0f, rng), std::runtime_error);
     EXPECT_THROW(sampling::sample_top_p(logits, 1.5f, rng), std::runtime_error);
 }
+
+// ===== TEXT GENERATION TESTS =====
+#include "generation.h"
+
+TEST(TextGeneration, ConfigDefaults) {
+    generation::GenerationConfig config;
+    
+    EXPECT_EQ(config.max_tokens, 50);
+    EXPECT_FLOAT_EQ(config.temperature, 1.0f);
+    EXPECT_EQ(config.top_k, 0);
+    EXPECT_FLOAT_EQ(config.top_p, 1.0f);
+    EXPECT_FALSE(config.use_greedy);
+    EXPECT_EQ(config.seed, 42);
+}
+
+TEST(TextGeneration, ConfigCustomValues) {
+    generation::GenerationConfig config(10, 0.8f, 40, 0.9f, true, 123);
+    
+    EXPECT_EQ(config.max_tokens, 10);
+    EXPECT_FLOAT_EQ(config.temperature, 0.8f);
+    EXPECT_EQ(config.top_k, 40);
+    EXPECT_FLOAT_EQ(config.top_p, 0.9f);
+    EXPECT_TRUE(config.use_greedy);
+    EXPECT_EQ(config.seed, 123);
+}
+
+TEST(TextGeneration, GenerateWithGreedy) {
+    model::ModelConfig model_config(20, 50, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {5, 10};
+    generation::GenerationConfig config(3, 1.0f, 0, 1.0f, true);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result.size(), 5);
+    EXPECT_EQ(result[0], 5);
+    EXPECT_EQ(result[1], 10);
+    
+    for (int token : result) {
+        EXPECT_GE(token, 0);
+        EXPECT_LT(token, 20);
+    }
+}
+
+TEST(TextGeneration, GenerateWithTemperature) {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {3, 7};
+    generation::GenerationConfig config(5, 1.0f, 0, 1.0f, false, 42);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result.size(), 7);
+    EXPECT_EQ(result[0], 3);
+    EXPECT_EQ(result[1], 7);
+}
+
+TEST(TextGeneration, GenerateWithTopK) {
+    model::ModelConfig model_config(20, 40, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {2};
+    generation::GenerationConfig config(10, 1.0f, 5, 1.0f, false, 99);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result.size(), 11);
+    EXPECT_EQ(result[0], 2);
+}
+
+TEST(TextGeneration, GenerateWithTopP) {
+    model::ModelConfig model_config(15, 35, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {1, 4, 7};
+    generation::GenerationConfig config(7, 1.0f, 0, 0.9f, false, 77);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result.size(), 10);
+    EXPECT_EQ(result[0], 1);
+    EXPECT_EQ(result[1], 4);
+    EXPECT_EQ(result[2], 7);
+}
+
+TEST(TextGeneration, DifferentSeedsProduceDifferentResults) {
+    model::ModelConfig model_config(20, 40, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {5};
+    
+    generation::GenerationConfig config1(5, 1.0f, 0, 1.0f, false, 42);
+    generation::GenerationConfig config2(5, 1.0f, 0, 1.0f, false, 123);
+    
+    std::vector<int> result1 = generation::generate(test_model, prompt, config1);
+    std::vector<int> result2 = generation::generate(test_model, prompt, config2);
+    
+    EXPECT_EQ(result1[0], result2[0]);
+    
+    bool has_difference = false;
+    for (size_t i = 1; i < result1.size(); i++) {
+        if (result1[i] != result2[i]) {
+            has_difference = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(has_difference);
+}
+
+TEST(TextGeneration, SameSeedIsDeterministic) {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {3, 8};
+    generation::GenerationConfig config(4, 1.0f, 0, 1.0f, false, 42);
+    
+    std::vector<int> result1 = generation::generate(test_model, prompt, config);
+    std::vector<int> result2 = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result1.size(), result2.size());
+    for (size_t i = 0; i < result1.size(); i++) {
+        EXPECT_EQ(result1[i], result2[i]);
+    }
+}
+
+TEST(TextGeneration, RespectsMaxSeqLen) {
+    model::ModelConfig model_config(15, 10, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {1, 2, 3, 4, 5};
+    generation::GenerationConfig config(20, 1.0f, 0, 1.0f, true);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_LE(result.size(), 10);
+}
+
+TEST(TextGeneration, TokenCallback) {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {2};
+    generation::GenerationConfig config(10, 1.0f, 0, 1.0f, true);
+    
+    int callback_count = 0;
+    config.token_callback = [&](int token, bool is_final) {
+        callback_count++;
+        return callback_count < 3;
+    };
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    EXPECT_EQ(result.size(), 4);
+    EXPECT_EQ(callback_count, 3);
+}
+
+TEST(TextGeneration, ErrorHandling) {
+    model::ModelConfig model_config(10, 20, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    EXPECT_THROW(generation::generate(
+        test_model, 
+        {}, 
+        generation::GenerationConfig()
+    ), std::runtime_error);
+    
+    EXPECT_THROW(generation::generate(
+        test_model,
+        {5},
+        generation::GenerationConfig(0)
+    ), std::runtime_error);
+    
+    EXPECT_THROW(generation::generate(
+        test_model,
+        {5},
+        generation::GenerationConfig(-5)
+    ), std::runtime_error);
+    
+    std::vector<int> long_prompt(25, 1);
+    EXPECT_THROW(generation::generate(
+        test_model,
+        long_prompt,
+        generation::GenerationConfig()
+    ), std::runtime_error);
+}

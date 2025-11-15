@@ -19,6 +19,7 @@ set(SOURCES
     src/transformer_block.cpp
     src/model.cpp
     src/sampling.cpp
+    src/generation.cpp
 )
 
 

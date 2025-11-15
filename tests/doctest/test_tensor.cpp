@@ -1723,3 +1723,225 @@ TEST_CASE("Sampling error handling") {
     CHECK_THROWS(sampling::sample_top_p(logits, 0.0f, rng));        // p=0
     CHECK_THROWS(sampling::sample_top_p(logits, 1.5f, rng));        // p>1
 }
+
+// ===== TEXT GENERATION TESTS =====
+#include "generation.h"
+
+TEST_CASE("Generation config defaults") {
+    generation::GenerationConfig config;
+    
+    CHECK(config.max_tokens == 50);
+    CHECK(config.temperature == 1.0f);
+    CHECK(config.top_k == 0);
+    CHECK(config.top_p == 1.0f);
+    CHECK(config.use_greedy == false);
+    CHECK(config.seed == 42);
+}
+
+TEST_CASE("Generation config custom values") {
+    generation::GenerationConfig config(10, 0.8f, 40, 0.9f, true, 123);
+    
+    CHECK(config.max_tokens == 10);
+    CHECK(config.temperature == 0.8f);
+    CHECK(config.top_k == 40);
+    CHECK(config.top_p == 0.9f);
+    CHECK(config.use_greedy == true);
+    CHECK(config.seed == 123);
+}
+
+TEST_CASE("Generate with greedy sampling") {
+    // Small model for testing
+    model::ModelConfig model_config(20, 50, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    // Prompt: 2 tokens
+    std::vector<int> prompt = {5, 10};
+    
+    // Generate 3 more tokens with greedy
+    generation::GenerationConfig config(3, 1.0f, 0, 1.0f, true);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    // Should have prompt + generated = 2 + 3 = 5 tokens
+    CHECK(result.size() == 5);
+    
+    // First tokens should match prompt
+    CHECK(result[0] == 5);
+    CHECK(result[1] == 10);
+    
+    // All tokens should be valid
+    for (int token : result) {
+        CHECK(token >= 0);
+        CHECK(token < 20);
+    }
+}
+
+TEST_CASE("Generate with temperature sampling") {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {3, 7};
+    
+    generation::GenerationConfig config(5, 1.0f, 0, 1.0f, false, 42);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    CHECK(result.size() == 7);  // 2 + 5
+    CHECK(result[0] == 3);
+    CHECK(result[1] == 7);
+}
+
+TEST_CASE("Generate with top-k sampling") {
+    model::ModelConfig model_config(20, 40, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {2};
+    
+    generation::GenerationConfig config(10, 1.0f, 5, 1.0f, false, 99);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    CHECK(result.size() == 11);  // 1 + 10
+    CHECK(result[0] == 2);
+}
+
+TEST_CASE("Generate with top-p sampling") {
+    model::ModelConfig model_config(15, 35, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {1, 4, 7};
+    
+    generation::GenerationConfig config(7, 1.0f, 0, 0.9f, false, 77);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    CHECK(result.size() == 10);  // 3 + 7
+    CHECK(result[0] == 1);
+    CHECK(result[1] == 4);
+    CHECK(result[2] == 7);
+}
+
+TEST_CASE("Generate with different seeds produces different results") {
+    model::ModelConfig model_config(20, 40, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {5};
+    
+    // Same config but different seeds
+    generation::GenerationConfig config1(5, 1.0f, 0, 1.0f, false, 42);
+    generation::GenerationConfig config2(5, 1.0f, 0, 1.0f, false, 123);
+    
+    std::vector<int> result1 = generation::generate(test_model, prompt, config1);
+    std::vector<int> result2 = generation::generate(test_model, prompt, config2);
+    
+    // Prompts should match
+    CHECK(result1[0] == result2[0]);
+    
+    // But generated sequences likely different (unless very unlucky)
+    bool has_difference = false;
+    for (size_t i = 1; i < result1.size(); i++) {
+        if (result1[i] != result2[i]) {
+            has_difference = true;
+            break;
+        }
+    }
+    CHECK(has_difference);  // Very likely with random sampling
+}
+
+TEST_CASE("Generate with same seed is deterministic") {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {3, 8};
+    
+    generation::GenerationConfig config(4, 1.0f, 0, 1.0f, false, 42);
+    
+    std::vector<int> result1 = generation::generate(test_model, prompt, config);
+    std::vector<int> result2 = generation::generate(test_model, prompt, config);
+    
+    // Should be identical
+    CHECK(result1.size() == result2.size());
+    for (size_t i = 0; i < result1.size(); i++) {
+        CHECK(result1[i] == result2[i]);
+    }
+}
+
+TEST_CASE("Generate respects max_seq_len") {
+    model::ModelConfig model_config(15, 10, 8, 2, 2, 16);  // max_seq_len = 10
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {1, 2, 3, 4, 5};  // 5 tokens
+    
+    // Try to generate 20 more (would exceed max_seq_len)
+    generation::GenerationConfig config(20, 1.0f, 0, 1.0f, true);
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    // Should stop at max_seq_len = 10
+    CHECK(result.size() <= 10);
+}
+
+TEST_CASE("Generate with token callback") {
+    model::ModelConfig model_config(15, 30, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    std::vector<int> prompt = {2};
+    
+    generation::GenerationConfig config(10, 1.0f, 0, 1.0f, true);
+    
+    // Callback that stops after 3 tokens
+    int callback_count = 0;
+    config.token_callback = [&](int token, bool is_final) {
+        callback_count++;
+        return callback_count < 3;  // Stop after 3 generated tokens
+    };
+    
+    std::vector<int> result = generation::generate(test_model, prompt, config);
+    
+    // Should stop early: prompt (1) + generated (3) = 4
+    CHECK(result.size() == 4);
+    CHECK(callback_count == 3);
+}
+
+TEST_CASE("Generate error handling") {
+    model::ModelConfig model_config(10, 20, 8, 2, 2, 16);
+    model::ModelWeights weights(model_config);
+    model::TransformerModel test_model(model_config, weights);
+    
+    // Empty prompt
+    CHECK_THROWS(generation::generate(
+        test_model, 
+        {}, 
+        generation::GenerationConfig()
+    ));
+    
+    // Zero max_tokens
+    CHECK_THROWS(generation::generate(
+        test_model,
+        {5},
+        generation::GenerationConfig(0)
+    ));
+    
+    // Negative max_tokens
+    CHECK_THROWS(generation::generate(
+        test_model,
+        {5},
+        generation::GenerationConfig(-5)
+    ));
+    
+    // Prompt exceeds max_seq_len
+    std::vector<int> long_prompt(25, 1);  // 25 tokens > max_seq_len(20)
+    CHECK_THROWS(generation::generate(
+        test_model,
+        long_prompt,
+        generation::GenerationConfig()
+    ));
+}
