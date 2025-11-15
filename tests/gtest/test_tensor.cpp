@@ -1165,3 +1165,199 @@ TEST(FeedforwardNetwork, LargeIntermediateDimension) {
         }
     }
 }
+
+// ===== TRANSFORMER BLOCK TESTS =====
+#include "transformer_block.h"
+
+TEST(TransformerBlock, BasicFunctionality) {
+    // Setup
+    int seq_len = 2;
+    int embedding_dim = 4;
+    int num_heads = 2;
+    
+    Tensor input({seq_len, embedding_dim}, {
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0
+    });
+    
+    // Attention weights
+    std::vector<float> attn_w_data(16, 0.0f);
+    for (int i = 0; i < 4; i++) attn_w_data[i * 4 + i] = 1.0f;
+    Tensor Wq({4, 4}, attn_w_data);
+    Tensor Wk({4, 4}, attn_w_data);
+    Tensor Wv({4, 4}, attn_w_data);
+    Tensor Wo({4, 4}, attn_w_data);
+    
+    // Feedforward weights
+    Tensor W1({4, 8}, std::vector<float>(32, 0.1f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    // Layer norm
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Action
+    Tensor output = transformer::transformer_block(
+        input, Wq, Wk, Wv, Wo, num_heads,
+        W1, b1, W2, b2,
+        gamma, beta, gamma, beta
+    );
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], seq_len);
+    EXPECT_EQ(output.get_shape()[1], embedding_dim);
+    
+    for (int i = 0; i < seq_len; i++) {
+        for (int j = 0; j < embedding_dim; j++) {
+            EXPECT_TRUE(std::isfinite(output.at(i, j)));
+            EXPECT_GE(output.at(i, j), -100.0f);
+            EXPECT_LE(output.at(i, j), 100.0f);
+        }
+    }
+}
+
+TEST(TransformerBlock, PreservesDimensions) {
+    // Test various sequence lengths
+    for (int seq_len : {1, 3, 5}) {
+        int embedding_dim = 4;
+        
+        std::vector<float> input_data(seq_len * embedding_dim);
+        for (size_t i = 0; i < input_data.size(); i++) {
+            input_data[i] = static_cast<float>(i + 1);
+        }
+        
+        Tensor input({seq_len, embedding_dim}, input_data);
+        
+        std::vector<float> w_data(16, 0.0f);
+        for (int i = 0; i < 4; i++) w_data[i * 4 + i] = 1.0f;
+        Tensor W({4, 4}, w_data);
+        
+        Tensor W1({4, 8}, std::vector<float>(32, 0.05f));
+        Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+        Tensor W2({8, 4}, std::vector<float>(32, 0.05f));
+        Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+        
+        Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+        Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+        
+        // Action
+        Tensor output = transformer::transformer_block(
+            input, W, W, W, W, 2,
+            W1, b1, W2, b2,
+            gamma, beta, gamma, beta
+        );
+        
+        // Verification
+        EXPECT_EQ(output.get_shape()[0], seq_len);
+        EXPECT_EQ(output.get_shape()[1], embedding_dim);
+    }
+}
+
+TEST(TransformerBlock, SingleToken) {
+    // Edge case: single token
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    std::vector<float> w_data(16, 0.0f);
+    for (int i = 0; i < 4; i++) w_data[i * 4 + i] = 1.0f;
+    Tensor W({4, 4}, w_data);
+    
+    Tensor W1({4, 8}, std::vector<float>(32, 0.1f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Action
+    Tensor output = transformer::transformer_block(
+        input, W, W, W, W, 1,
+        W1, b1, W2, b2,
+        gamma, beta, gamma, beta
+    );
+    
+    // Verification
+    EXPECT_EQ(output.get_shape()[0], 1);
+    EXPECT_EQ(output.get_shape()[1], 4);
+    
+    for (int j = 0; j < 4; j++) {
+        EXPECT_TRUE(std::isfinite(output.at(0, j)));
+    }
+}
+
+TEST(TransformerBlock, ResidualConnectionsEffect) {
+    // Residual connections should preserve input information
+    Tensor input({2, 4}, {
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0
+    });
+    
+    // Zero weights
+    Tensor W({4, 4}, std::vector<float>(16, 0.0f));
+    Tensor W1({4, 8}, std::vector<float>(32, 0.0f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.0f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    // Action
+    Tensor output = transformer::transformer_block(
+        input, W, W, W, W, 2,
+        W1, b1, W2, b2,
+        gamma, beta, gamma, beta
+    );
+    
+    // Verification: Output should be non-zero (residuals preserve input)
+    bool has_nonzero = false;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            if (std::abs(output.at(i, j)) > 0.01f) {
+                has_nonzero = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(has_nonzero);
+}
+
+TEST(TransformerBlock, MultipleHeads) {
+    // Test with various numbers of heads
+    Tensor input({2, 8}, {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
+    });
+    
+    std::vector<float> w_data(64, 0.0f);
+    for (int i = 0; i < 8; i++) w_data[i * 8 + i] = 0.5f;
+    Tensor W({8, 8}, w_data);
+    
+    Tensor W1({8, 16}, std::vector<float>(128, 0.05f));
+    Tensor b1({1, 16}, std::vector<float>(16, 0.0f));
+    Tensor W2({16, 8}, std::vector<float>(128, 0.05f));
+    Tensor b2({1, 8}, std::vector<float>(8, 0.0f));
+    
+    Tensor gamma({1, 8}, std::vector<float>(8, 1.0f));
+    Tensor beta({1, 8}, std::vector<float>(8, 0.0f));
+    
+    // Test different head counts
+    for (int num_heads : {2, 4, 8}) {
+        Tensor output = transformer::transformer_block(
+            input, W, W, W, W, num_heads,
+            W1, b1, W2, b2,
+            gamma, beta, gamma, beta
+        );
+        
+        EXPECT_EQ(output.get_shape()[0], 2);
+        EXPECT_EQ(output.get_shape()[1], 8);
+        
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 8; j++) {
+                EXPECT_TRUE(std::isfinite(output.at(i, j)));
+            }
+        }
+    }
+}

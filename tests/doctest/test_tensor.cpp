@@ -1137,3 +1137,203 @@ TEST_CASE("Feedforward processes tokens independently") {
     CHECK(output.at(0, 1) == doctest::Approx(output.at(1, 1)).epsilon(0.001));
     CHECK(output.at(0, 2) == doctest::Approx(output.at(1, 2)).epsilon(0.001));
 }
+
+// ===== TRANSFORMER BLOCK TESTS =====
+#include "transformer_block.h"
+
+TEST_CASE("Transformer block basic functionality") {
+    // Simple case: 2 tokens, 4 embedding dims, 2 heads
+    int seq_len = 2;
+    int embedding_dim = 4;
+    int num_heads = 2;
+    int intermediate_dim = 8;  // 2× expansion for simplicity
+    
+    Tensor input({seq_len, embedding_dim}, {
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0
+    });
+    
+    // Attention weights (identity-like for simplicity)
+    std::vector<float> attn_w_data(16, 0.0f);
+    for (int i = 0; i < 4; i++) {
+        attn_w_data[i * 4 + i] = 1.0f;
+    }
+    Tensor Wq({4, 4}, attn_w_data);
+    Tensor Wk({4, 4}, attn_w_data);
+    Tensor Wv({4, 4}, attn_w_data);
+    Tensor Wo({4, 4}, attn_w_data);
+    
+    // Feedforward weights (small values)
+    Tensor W1({4, 8}, std::vector<float>(32, 0.1f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    // Layer norm parameters (identity)
+    Tensor gamma1({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta1({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    Tensor gamma2({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta2({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    Tensor output = transformer::transformer_block(
+        input, Wq, Wk, Wv, Wo, num_heads,
+        W1, b1, W2, b2,
+        gamma1, beta1, gamma2, beta2
+    );
+    
+    // Check shape preserved
+    CHECK(output.get_shape()[0] == seq_len);
+    CHECK(output.get_shape()[1] == embedding_dim);
+    
+    // Output should be finite and reasonable
+    for (int i = 0; i < seq_len; i++) {
+        for (int j = 0; j < embedding_dim; j++) {
+            CHECK(std::isfinite(output.at(i, j)));
+            CHECK(output.at(i, j) >= -100.0f);
+            CHECK(output.at(i, j) <= 100.0f);
+        }
+    }
+}
+
+TEST_CASE("Transformer block preserves dimensions") {
+    // Test with different sequence lengths
+    for (int seq_len : {1, 3, 5}) {
+        int embedding_dim = 4;
+        int num_heads = 2;
+        
+        std::vector<float> input_data(seq_len * embedding_dim);
+        for (size_t i = 0; i < input_data.size(); i++) {
+            input_data[i] = static_cast<float>(i + 1);
+        }
+        
+        Tensor input({seq_len, embedding_dim}, input_data);
+        
+        // Simple weights
+        std::vector<float> w_data(16, 0.0f);
+        for (int i = 0; i < 4; i++) w_data[i * 4 + i] = 1.0f;
+        Tensor W({4, 4}, w_data);
+        
+        Tensor W1({4, 8}, std::vector<float>(32, 0.05f));
+        Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+        Tensor W2({8, 4}, std::vector<float>(32, 0.05f));
+        Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+        
+        Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+        Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+        
+        Tensor output = transformer::transformer_block(
+            input, W, W, W, W, num_heads,
+            W1, b1, W2, b2,
+            gamma, beta, gamma, beta
+        );
+        
+        CHECK(output.get_shape()[0] == seq_len);
+        CHECK(output.get_shape()[1] == embedding_dim);
+    }
+}
+
+TEST_CASE("Transformer block with single token") {
+    // Edge case: sequence length = 1
+    Tensor input({1, 4}, {1.0, 2.0, 3.0, 4.0});
+    
+    std::vector<float> w_data(16, 0.0f);
+    for (int i = 0; i < 4; i++) w_data[i * 4 + i] = 1.0f;
+    Tensor W({4, 4}, w_data);
+    
+    Tensor W1({4, 8}, std::vector<float>(32, 0.1f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.1f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    Tensor output = transformer::transformer_block(
+        input, W, W, W, W, 1,
+        W1, b1, W2, b2,
+        gamma, beta, gamma, beta
+    );
+    
+    CHECK(output.get_shape()[0] == 1);
+    CHECK(output.get_shape()[1] == 4);
+    
+    for (int j = 0; j < 4; j++) {
+        CHECK(std::isfinite(output.at(0, j)));
+    }
+}
+
+TEST_CASE("Transformer block residual connections effect") {
+    // Residual connections should preserve some of the input
+    // Even with zero weights, output shouldn't be zero
+    Tensor input({2, 4}, {
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0
+    });
+    
+    // Zero weights (no transformation)
+    Tensor W({4, 4}, std::vector<float>(16, 0.0f));
+    
+    Tensor W1({4, 8}, std::vector<float>(32, 0.0f));
+    Tensor b1({1, 8}, std::vector<float>(8, 0.0f));
+    Tensor W2({8, 4}, std::vector<float>(32, 0.0f));
+    Tensor b2({1, 4}, std::vector<float>(4, 0.0f));
+    
+    Tensor gamma({1, 4}, {1.0, 1.0, 1.0, 1.0});
+    Tensor beta({1, 4}, {0.0, 0.0, 0.0, 0.0});
+    
+    Tensor output = transformer::transformer_block(
+        input, W, W, W, W, 2,
+        W1, b1, W2, b2,
+        gamma, beta, gamma, beta
+    );
+    
+    // With residual connections, output should not be all zeros
+    bool has_nonzero = false;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 4; j++) {
+            if (std::abs(output.at(i, j)) > 0.01f) {
+                has_nonzero = true;
+                break;
+            }
+        }
+    }
+    CHECK(has_nonzero);
+}
+
+TEST_CASE("Transformer block with multiple heads") {
+    // Test with different numbers of heads
+    Tensor input({2, 8}, {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
+    });
+    
+    std::vector<float> w_data(64, 0.0f);
+    for (int i = 0; i < 8; i++) w_data[i * 8 + i] = 0.5f;
+    Tensor W({8, 8}, w_data);
+    
+    Tensor W1({8, 16}, std::vector<float>(128, 0.05f));
+    Tensor b1({1, 16}, std::vector<float>(16, 0.0f));
+    Tensor W2({16, 8}, std::vector<float>(128, 0.05f));
+    Tensor b2({1, 8}, std::vector<float>(8, 0.0f));
+    
+    Tensor gamma({1, 8}, std::vector<float>(8, 1.0f));
+    Tensor beta({1, 8}, std::vector<float>(8, 0.0f));
+    
+    // Try with 2, 4, and 8 heads
+    for (int num_heads : {2, 4, 8}) {
+        Tensor output = transformer::transformer_block(
+            input, W, W, W, W, num_heads,
+            W1, b1, W2, b2,
+            gamma, beta, gamma, beta
+        );
+        
+        CHECK(output.get_shape()[0] == 2);
+        CHECK(output.get_shape()[1] == 8);
+        
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 8; j++) {
+                CHECK(std::isfinite(output.at(i, j)));
+            }
+        }
+    }
+}
