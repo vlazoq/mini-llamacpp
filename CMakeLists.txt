@@ -17,6 +17,7 @@ set(SOURCES
     src/attention.cpp
     src/feedforward.cpp
     src/transformer_block.cpp
+    src/model.cpp
 )
 
 

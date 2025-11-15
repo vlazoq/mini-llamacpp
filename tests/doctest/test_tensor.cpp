@@ -1337,3 +1337,193 @@ TEST_CASE("Transformer block with multiple heads") {
         }
     }
 }
+
+// ===== COMPLETE MODEL TESTS =====
+#include "model.h"
+
+TEST_CASE("Model configuration basic") {
+    // Test model config creation
+    model::ModelConfig config(
+        100,    // vocab_size
+        128,    // max_seq_len
+        64,     // embedding_dim
+        4,      // num_layers
+        4,      // num_heads
+        256     // intermediate_dim
+    );
+    
+    CHECK(config.vocab_size == 100);
+    CHECK(config.max_seq_len == 128);
+    CHECK(config.embedding_dim == 64);
+    CHECK(config.num_layers == 4);
+    CHECK(config.num_heads == 4);
+    CHECK(config.intermediate_dim == 256);
+}
+
+TEST_CASE("Model weights initialization") {
+    // Small model for testing
+    model::ModelConfig config(10, 16, 8, 2, 2, 16);
+    
+    // Create weights (should initialize with random values)
+    model::ModelWeights weights(config);
+    
+    // Check embedding tables exist with correct shapes
+    CHECK(weights.token_embeddings.get_shape()[0] == 10);
+    CHECK(weights.token_embeddings.get_shape()[1] == 8);
+    
+    CHECK(weights.position_embeddings.get_shape()[0] == 16);
+    CHECK(weights.position_embeddings.get_shape()[1] == 8);
+    
+    // Check correct number of blocks
+    CHECK(weights.blocks.size() == 2);
+    
+    // Check output projection shape
+    CHECK(weights.output_weight.get_shape()[0] == 8);
+    CHECK(weights.output_weight.get_shape()[1] == 10);
+}
+
+TEST_CASE("Block weights initialization") {
+    // Create block weights
+    model::BlockWeights block(8, 16);
+    
+    // Check attention weights
+    CHECK(block.Wq.get_shape()[0] == 8);
+    CHECK(block.Wq.get_shape()[1] == 8);
+    CHECK(block.Wk.get_shape()[0] == 8);
+    CHECK(block.Wk.get_shape()[1] == 8);
+    
+    // Check feedforward weights
+    CHECK(block.W1.get_shape()[0] == 8);
+    CHECK(block.W1.get_shape()[1] == 16);
+    CHECK(block.W2.get_shape()[0] == 16);
+    CHECK(block.W2.get_shape()[1] == 8);
+    
+    // Check biases
+    CHECK(block.b1.get_shape()[1] == 16);
+    CHECK(block.b2.get_shape()[1] == 8);
+}
+
+TEST_CASE("Transformer model forward pass") {
+    // Tiny model for testing
+    model::ModelConfig config(
+        20,     // vocab_size
+        10,     // max_seq_len
+        8,      // embedding_dim
+        2,      // num_layers
+        2,      // num_heads
+        16      // intermediate_dim
+    );
+    
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    // Input: 3 tokens
+    std::vector<int> token_ids = {5, 10, 15};
+    
+    // Forward pass
+    Tensor logits = model.forward(token_ids);
+    
+    // Check output shape: (seq_len × vocab_size)
+    CHECK(logits.get_shape()[0] == 3);
+    CHECK(logits.get_shape()[1] == 20);
+    
+    // Check all logits are finite
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 20; j++) {
+            CHECK(std::isfinite(logits.at(i, j)));
+        }
+    }
+}
+
+TEST_CASE("Model forward pass with single token") {
+    // Edge case: single token
+    model::ModelConfig config(15, 10, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    std::vector<int> token_ids = {7};
+    
+    Tensor logits = model.forward(token_ids);
+    
+    CHECK(logits.get_shape()[0] == 1);
+    CHECK(logits.get_shape()[1] == 15);
+}
+
+TEST_CASE("Model forward pass with varying sequence lengths") {
+    model::ModelConfig config(20, 50, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    // Test different sequence lengths
+    for (int seq_len : {1, 3, 5, 10}) {
+        std::vector<int> token_ids;
+        for (int i = 0; i < seq_len; i++) {
+            token_ids.push_back(i % 20);
+        }
+        
+        Tensor logits = model.forward(token_ids);
+        
+        CHECK(logits.get_shape()[0] == seq_len);
+        CHECK(logits.get_shape()[1] == 20);
+    }
+}
+
+TEST_CASE("Model rejects sequence too long") {
+    model::ModelConfig config(10, 5, 8, 2, 2, 16);  // max_seq_len = 5
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    // Try sequence longer than max_seq_len
+    std::vector<int> token_ids = {1, 2, 3, 4, 5, 6};  // 6 tokens > 5 max
+    
+    CHECK_THROWS(model.forward(token_ids));
+}
+
+TEST_CASE("Model rejects invalid token IDs") {
+    model::ModelConfig config(10, 20, 8, 2, 2, 16);  // vocab_size = 10
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    // Token ID out of vocabulary range
+    std::vector<int> token_ids = {5, 15, 3};  // 15 >= vocab_size
+    
+    CHECK_THROWS(model.forward(token_ids));
+}
+
+TEST_CASE("Model with multiple layers processes correctly") {
+    // Test with different layer counts
+    for (int num_layers : {1, 2, 4, 8}) {
+        model::ModelConfig config(15, 20, 8, num_layers, 2, 16);
+        model::ModelWeights weights(config);
+        model::TransformerModel model(config, weights);
+        
+        std::vector<int> token_ids = {2, 5, 8};
+        
+        Tensor logits = model.forward(token_ids);
+        
+        CHECK(logits.get_shape()[0] == 3);
+        CHECK(logits.get_shape()[1] == 15);
+        
+        // All outputs should be finite
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 15; j++) {
+                CHECK(std::isfinite(logits.at(i, j)));
+            }
+        }
+    }
+}
+
+TEST_CASE("Model configuration with different head counts") {
+    // Test that embedding_dim must be divisible by num_heads
+    model::ModelConfig config1(10, 20, 8, 2, 2, 16);  // 8 % 2 = 0 ✓
+    model::ModelWeights weights1(config1);
+    CHECK_NOTHROW(model::TransformerModel(config1, weights1));
+    
+    model::ModelConfig config2(10, 20, 8, 2, 4, 16);  // 8 % 4 = 0 ✓
+    model::ModelWeights weights2(config2);
+    CHECK_NOTHROW(model::TransformerModel(config2, weights2));
+    
+    model::ModelConfig config3(10, 20, 9, 2, 2, 16);  // 9 % 2 = 1 ✗
+    model::ModelWeights weights3(config3);
+    CHECK_THROWS(model::TransformerModel(config3, weights3));
+}

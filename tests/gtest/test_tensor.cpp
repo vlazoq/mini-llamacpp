@@ -1361,3 +1361,151 @@ TEST(TransformerBlock, MultipleHeads) {
         }
     }
 }
+
+// ===== COMPLETE MODEL TESTS =====
+#include "model.h"
+
+TEST(CompleteModel, ConfigurationBasic) {
+    model::ModelConfig config(100, 128, 64, 4, 4, 256);
+    
+    EXPECT_EQ(config.vocab_size, 100);
+    EXPECT_EQ(config.max_seq_len, 128);
+    EXPECT_EQ(config.embedding_dim, 64);
+    EXPECT_EQ(config.num_layers, 4);
+    EXPECT_EQ(config.num_heads, 4);
+    EXPECT_EQ(config.intermediate_dim, 256);
+}
+
+TEST(CompleteModel, WeightsInitialization) {
+    model::ModelConfig config(10, 16, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    
+    EXPECT_EQ(weights.token_embeddings.get_shape()[0], 10);
+    EXPECT_EQ(weights.token_embeddings.get_shape()[1], 8);
+    
+    EXPECT_EQ(weights.position_embeddings.get_shape()[0], 16);
+    EXPECT_EQ(weights.position_embeddings.get_shape()[1], 8);
+    
+    EXPECT_EQ(weights.blocks.size(), 2);
+    
+    EXPECT_EQ(weights.output_weight.get_shape()[0], 8);
+    EXPECT_EQ(weights.output_weight.get_shape()[1], 10);
+}
+
+TEST(CompleteModel, BlockWeightsInitialization) {
+    model::BlockWeights block(8, 16);
+    
+    EXPECT_EQ(block.Wq.get_shape()[0], 8);
+    EXPECT_EQ(block.Wq.get_shape()[1], 8);
+    
+    EXPECT_EQ(block.W1.get_shape()[0], 8);
+    EXPECT_EQ(block.W1.get_shape()[1], 16);
+    
+    EXPECT_EQ(block.b1.get_shape()[1], 16);
+    EXPECT_EQ(block.b2.get_shape()[1], 8);
+}
+
+TEST(CompleteModel, ForwardPass) {
+    model::ModelConfig config(20, 10, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    std::vector<int> token_ids = {5, 10, 15};
+    
+    Tensor logits = model.forward(token_ids);
+    
+    EXPECT_EQ(logits.get_shape()[0], 3);
+    EXPECT_EQ(logits.get_shape()[1], 20);
+    
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 20; j++) {
+            EXPECT_TRUE(std::isfinite(logits.at(i, j)));
+        }
+    }
+}
+
+TEST(CompleteModel, SingleTokenForward) {
+    model::ModelConfig config(15, 10, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    std::vector<int> token_ids = {7};
+    
+    Tensor logits = model.forward(token_ids);
+    
+    EXPECT_EQ(logits.get_shape()[0], 1);
+    EXPECT_EQ(logits.get_shape()[1], 15);
+}
+
+TEST(CompleteModel, VaryingSequenceLengths) {
+    model::ModelConfig config(20, 50, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    for (int seq_len : {1, 3, 5, 10}) {
+        std::vector<int> token_ids;
+        for (int i = 0; i < seq_len; i++) {
+            token_ids.push_back(i % 20);
+        }
+        
+        Tensor logits = model.forward(token_ids);
+        
+        EXPECT_EQ(logits.get_shape()[0], seq_len);
+        EXPECT_EQ(logits.get_shape()[1], 20);
+    }
+}
+
+TEST(CompleteModel, RejectsSequenceTooLong) {
+    model::ModelConfig config(10, 5, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    std::vector<int> token_ids = {1, 2, 3, 4, 5, 6};
+    
+    EXPECT_THROW(model.forward(token_ids), std::runtime_error);
+}
+
+TEST(CompleteModel, RejectsInvalidTokenIDs) {
+    model::ModelConfig config(10, 20, 8, 2, 2, 16);
+    model::ModelWeights weights(config);
+    model::TransformerModel model(config, weights);
+    
+    std::vector<int> token_ids = {5, 15, 3};
+    
+    EXPECT_THROW(model.forward(token_ids), std::runtime_error);
+}
+
+TEST(CompleteModel, MultipleLayersProcess) {
+    for (int num_layers : {1, 2, 4, 8}) {
+        model::ModelConfig config(15, 20, 8, num_layers, 2, 16);
+        model::ModelWeights weights(config);
+        model::TransformerModel model(config, weights);
+        
+        std::vector<int> token_ids = {2, 5, 8};
+        
+        Tensor logits = model.forward(token_ids);
+        
+        EXPECT_EQ(logits.get_shape()[0], 3);
+        EXPECT_EQ(logits.get_shape()[1], 15);
+        
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 15; j++) {
+                EXPECT_TRUE(std::isfinite(logits.at(i, j)));
+            }
+        }
+    }
+}
+
+TEST(CompleteModel, HeadCountValidation) {
+    model::ModelConfig config1(10, 20, 8, 2, 2, 16);
+    model::ModelWeights weights1(config1);
+    EXPECT_NO_THROW(model::TransformerModel(config1, weights1));
+    
+    model::ModelConfig config2(10, 20, 8, 2, 4, 16);
+    model::ModelWeights weights2(config2);
+    EXPECT_NO_THROW(model::TransformerModel(config2, weights2));
+    
+    model::ModelConfig config3(10, 20, 9, 2, 2, 16);
+    model::ModelWeights weights3(config3);
+    EXPECT_THROW(model::TransformerModel(config3, weights3), std::runtime_error);
+}
