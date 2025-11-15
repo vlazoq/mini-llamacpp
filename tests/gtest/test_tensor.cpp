@@ -1509,3 +1509,176 @@ TEST(CompleteModel, HeadCountValidation) {
     model::ModelWeights weights3(config3);
     EXPECT_THROW(model::TransformerModel(config3, weights3), std::runtime_error);
 }
+
+// ===== SAMPLING TESTS =====
+#include "sampling.h"
+
+TEST(Sampling, GreedyPicksHighest) {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    EXPECT_EQ(sampled, 1);
+}
+
+TEST(Sampling, GreedyWithTies) {
+    std::vector<float> logits = {3.0, 5.0, 5.0, 2.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    EXPECT_EQ(sampled, 1);
+}
+
+TEST(Sampling, GreedyWithNegatives) {
+    std::vector<float> logits = {-10.0, -5.0, -15.0, -8.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    EXPECT_EQ(sampled, 1);
+}
+
+TEST(Sampling, TemperatureDeterministicWithSeed) {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    std::mt19937 rng1(42);
+    std::mt19937 rng2(42);
+    
+    int sample1 = sampling::sample_temperature(logits, 1.0f, rng1);
+    int sample2 = sampling::sample_temperature(logits, 1.0f, rng2);
+    
+    EXPECT_EQ(sample1, sample2);
+}
+
+TEST(Sampling, LowTemperatureFocuses) {
+    std::vector<float> logits = {1.0, 10.0, 2.0, 3.0};
+    
+    int count_highest = 0;
+    int trials = 100;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_temperature(logits, 0.1f, local_rng);
+        if (sample == 1) count_highest++;
+    }
+    
+    EXPECT_GT(count_highest, 90);
+}
+
+TEST(Sampling, HighTemperatureSpreads) {
+    std::vector<float> logits = {1.0, 10.0, 2.0, 3.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_temperature(logits, 2.0f, local_rng);
+        counts[sample]++;
+    }
+    
+    EXPECT_LT(counts[1], 900);
+    EXPECT_GT(counts[0], 0);
+}
+
+TEST(Sampling, TemperatureNearZeroIsGreedy) {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    std::mt19937 rng(42);
+    
+    int sample = sampling::sample_temperature(logits, 1e-7f, rng);
+    
+    EXPECT_EQ(sample, 1);
+}
+
+TEST(Sampling, TopKOnlyConsidersTopK) {
+    std::vector<float> logits = {1.0, 2.0, 10.0, 3.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_k(logits, 2, local_rng);
+        counts[sample]++;
+    }
+    
+    EXPECT_EQ(counts[0], 0);
+    EXPECT_EQ(counts[1], 0);
+    EXPECT_GT(counts[2], 0);
+    EXPECT_GT(counts[3], 0);
+}
+
+TEST(Sampling, TopKWithK1IsGreedy) {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    std::mt19937 rng(42);
+    
+    int sample = sampling::sample_top_k(logits, 1, rng);
+    
+    EXPECT_EQ(sample, 1);
+}
+
+TEST(Sampling, TopKWithKEqualVocabSamplesAll) {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_k(logits, 4, local_rng);
+        counts[sample]++;
+    }
+    
+    EXPECT_GT(counts[0], 0);
+    EXPECT_GT(counts[1], 0);
+    EXPECT_GT(counts[2], 0);
+    EXPECT_GT(counts[3], 0);
+}
+
+TEST(Sampling, TopPRespectsThreshold) {
+    std::vector<float> logits = {10.0, 1.0, 0.5, 0.1};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_p(logits, 0.95f, local_rng);
+        counts[sample]++;
+    }
+    
+    EXPECT_GT(counts[0], 800);
+}
+
+TEST(Sampling, TopPWithP1SamplesAll) {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_p(logits, 1.0f, local_rng);
+        counts[sample]++;
+    }
+    
+    EXPECT_GT(counts[0], 0);
+    EXPECT_GT(counts[1], 0);
+    EXPECT_GT(counts[2], 0);
+    EXPECT_GT(counts[3], 0);
+}
+
+TEST(Sampling, ErrorHandling) {
+    std::mt19937 rng(42);
+    
+    EXPECT_THROW(sampling::sample_greedy({}), std::runtime_error);
+    EXPECT_THROW(sampling::sample_temperature({}, 1.0f, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_k({}, 1, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_p({}, 0.9f, rng), std::runtime_error);
+    
+    std::vector<float> logits = {1.0, 2.0, 3.0};
+    EXPECT_THROW(sampling::sample_temperature(logits, 0.0f, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_temperature(logits, -1.0f, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_k(logits, 0, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_k(logits, -1, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_p(logits, 0.0f, rng), std::runtime_error);
+    EXPECT_THROW(sampling::sample_top_p(logits, 1.5f, rng), std::runtime_error);
+}

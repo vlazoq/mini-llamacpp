@@ -18,6 +18,7 @@ set(SOURCES
     src/feedforward.cpp
     src/transformer_block.cpp
     src/model.cpp
+    src/sampling.cpp
 )
 
 

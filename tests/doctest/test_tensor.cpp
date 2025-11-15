@@ -1527,3 +1527,196 @@ TEST_CASE("Model configuration with different head counts") {
     model::ModelWeights weights3(config3);
     CHECK_THROWS(model::TransformerModel(config3, weights3));
 }
+
+// ===== SAMPLING TESTS =====
+#include "sampling.h"
+
+TEST_CASE("Greedy sampling picks highest logit") {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    // Should always pick index 1 (highest value = 5.0)
+    CHECK(sampled == 1);
+}
+
+TEST_CASE("Greedy sampling with ties picks first") {
+    std::vector<float> logits = {3.0, 5.0, 5.0, 2.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    // With ties at 5.0, picks first occurrence (index 1)
+    CHECK(sampled == 1);
+}
+
+TEST_CASE("Greedy sampling with negative values") {
+    std::vector<float> logits = {-10.0, -5.0, -15.0, -8.0};
+    
+    int sampled = sampling::sample_greedy(logits);
+    
+    // Should pick least negative (index 1, value = -5.0)
+    CHECK(sampled == 1);
+}
+
+TEST_CASE("Temperature sampling is deterministic with seed") {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    std::mt19937 rng1(42);
+    std::mt19937 rng2(42);
+    
+    int sample1 = sampling::sample_temperature(logits, 1.0f, rng1);
+    int sample2 = sampling::sample_temperature(logits, 1.0f, rng2);
+    
+    // Same seed should give same result
+    CHECK(sample1 == sample2);
+}
+
+TEST_CASE("Temperature sampling low temperature focuses") {
+    std::vector<float> logits = {1.0, 10.0, 2.0, 3.0};
+    std::mt19937 rng(42);
+    
+    // Very low temperature should mostly pick highest (index 1)
+    int count_highest = 0;
+    int trials = 100;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_temperature(logits, 0.1f, local_rng);
+        if (sample == 1) count_highest++;
+    }
+    
+    // Should pick highest >90% of the time with temp=0.1
+    CHECK(count_highest > 90);
+}
+
+TEST_CASE("Temperature sampling high temperature spreads") {
+    std::vector<float> logits = {1.0, 10.0, 2.0, 3.0};
+    
+    // High temperature should spread probability more evenly
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_temperature(logits, 2.0f, local_rng);
+        counts[sample]++;
+    }
+    
+    // With high temp, highest shouldn't dominate completely
+    CHECK(counts[1] < 900);  // Not >90% for highest
+    CHECK(counts[0] > 0);    // Others should get sampled
+}
+
+TEST_CASE("Temperature near zero approaches greedy") {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    std::mt19937 rng(42);
+    
+    int sample = sampling::sample_temperature(logits, 1e-7f, rng);
+    
+    // Should behave like greedy
+    CHECK(sample == 1);
+}
+
+TEST_CASE("Top-k sampling only considers top k") {
+    std::vector<float> logits = {1.0, 2.0, 10.0, 3.0};
+    std::mt19937 rng(42);
+    
+    // k=2 should only sample from indices 2 (10.0) and 3 (3.0)
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_k(logits, 2, local_rng);
+        counts[sample]++;
+    }
+    
+    // Indices 0 and 1 should never be sampled
+    CHECK(counts[0] == 0);
+    CHECK(counts[1] == 0);
+    CHECK(counts[2] > 0);
+    CHECK(counts[3] > 0);
+}
+
+TEST_CASE("Top-k with k=1 is greedy") {
+    std::vector<float> logits = {1.0, 5.0, 3.0, 2.0};
+    std::mt19937 rng(42);
+    
+    int sample = sampling::sample_top_k(logits, 1, rng);
+    
+    CHECK(sample == 1);
+}
+
+TEST_CASE("Top-k with k=vocab_size samples from all") {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_k(logits, 4, local_rng);
+        counts[sample]++;
+    }
+    
+    // All indices should be sampled at least once
+    CHECK(counts[0] > 0);
+    CHECK(counts[1] > 0);
+    CHECK(counts[2] > 0);
+    CHECK(counts[3] > 0);
+}
+
+TEST_CASE("Top-p sampling respects probability threshold") {
+    std::vector<float> logits = {10.0, 1.0, 0.5, 0.1};
+    
+    // With these logits, after softmax index 0 dominates
+    // p=0.9 should mostly include just index 0
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_p(logits, 0.95f, local_rng);
+        counts[sample]++;
+    }
+    
+    // Index 0 should dominate
+    CHECK(counts[0] > 800);
+}
+
+TEST_CASE("Top-p with p=1.0 samples from all") {
+    std::vector<float> logits = {1.0, 2.0, 3.0, 4.0};
+    
+    std::vector<int> counts(4, 0);
+    int trials = 1000;
+    
+    for (int i = 0; i < trials; i++) {
+        std::mt19937 local_rng(i);
+        int sample = sampling::sample_top_p(logits, 1.0f, local_rng);
+        counts[sample]++;
+    }
+    
+    // All should be sampled
+    CHECK(counts[0] > 0);
+    CHECK(counts[1] > 0);
+    CHECK(counts[2] > 0);
+    CHECK(counts[3] > 0);
+}
+
+TEST_CASE("Sampling error handling") {
+    std::mt19937 rng(42);
+    
+    // Empty logits
+    CHECK_THROWS(sampling::sample_greedy({}));
+    CHECK_THROWS(sampling::sample_temperature({}, 1.0f, rng));
+    CHECK_THROWS(sampling::sample_top_k({}, 1, rng));
+    CHECK_THROWS(sampling::sample_top_p({}, 0.9f, rng));
+    
+    // Invalid parameters
+    std::vector<float> logits = {1.0, 2.0, 3.0};
+    CHECK_THROWS(sampling::sample_temperature(logits, 0.0f, rng));  // Zero temp
+    CHECK_THROWS(sampling::sample_temperature(logits, -1.0f, rng)); // Negative temp
+    CHECK_THROWS(sampling::sample_top_k(logits, 0, rng));           // k=0
+    CHECK_THROWS(sampling::sample_top_k(logits, -1, rng));          // k<0
+    CHECK_THROWS(sampling::sample_top_p(logits, 0.0f, rng));        // p=0
+    CHECK_THROWS(sampling::sample_top_p(logits, 1.5f, rng));        // p>1
+}
