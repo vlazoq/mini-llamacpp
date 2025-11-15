@@ -20,6 +20,7 @@ set(SOURCES
     src/model.cpp
     src/sampling.cpp
     src/generation.cpp
+    src/tokenizer.cpp
 )
 
 

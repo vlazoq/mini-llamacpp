@@ -1883,3 +1883,191 @@ TEST(TextGeneration, ErrorHandling) {
         generation::GenerationConfig()
     ), std::runtime_error);
 }
+
+// ===== TOKENIZER TESTS =====
+#include "tokenizer.h"
+
+TEST(Tokenizer, VocabularySize) {
+    tokenizer::CharTokenizer tok;
+    
+    EXPECT_EQ(tok.vocab_size(), 132);
+}
+
+TEST(Tokenizer, SpecialTokenConstants) {
+    EXPECT_EQ(tokenizer::CharTokenizer::PAD_TOKEN, 0);
+    EXPECT_EQ(tokenizer::CharTokenizer::UNK_TOKEN, 1);
+    EXPECT_EQ(tokenizer::CharTokenizer::BOS_TOKEN, 2);
+    EXPECT_EQ(tokenizer::CharTokenizer::EOS_TOKEN, 3);
+}
+
+TEST(Tokenizer, EncodeSimpleText) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("Hi");
+    
+    EXPECT_EQ(tokens.size(), 2);
+    EXPECT_EQ(tokens[0], 76);
+    EXPECT_EQ(tokens[1], 109);
+}
+
+TEST(Tokenizer, EncodeWithSpecialTokens) {
+    tokenizer::CharTokenizer tok(true);
+    
+    std::vector<int> tokens = tok.encode("Hi");
+    
+    EXPECT_EQ(tokens.size(), 4);
+    EXPECT_EQ(tokens[0], 2);
+    EXPECT_EQ(tokens[1], 76);
+    EXPECT_EQ(tokens[2], 109);
+    EXPECT_EQ(tokens[3], 3);
+}
+
+TEST(Tokenizer, EncodeEmptyString) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("");
+    
+    EXPECT_TRUE(tokens.empty());
+}
+
+TEST(Tokenizer, EncodeEmptyStringWithSpecialTokens) {
+    tokenizer::CharTokenizer tok(true);
+    
+    std::vector<int> tokens = tok.encode("");
+    
+    EXPECT_EQ(tokens.size(), 2);
+    EXPECT_EQ(tokens[0], 2);
+    EXPECT_EQ(tokens[1], 3);
+}
+
+TEST(Tokenizer, EncodeNumbersAndSymbols) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("123!@#");
+    
+    EXPECT_EQ(tokens.size(), 6);
+    
+    for (int token : tokens) {
+        EXPECT_GE(token, 4);
+        EXPECT_LT(token, 132);
+    }
+}
+
+TEST(Tokenizer, EncodeSpacesAndNewlines) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("A B\nC");
+    
+    EXPECT_EQ(tokens.size(), 5);
+}
+
+TEST(Tokenizer, DecodeSimpleTokens) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {76, 109};
+    
+    std::string text = tok.decode(tokens);
+    
+    EXPECT_EQ(text, "Hi");
+}
+
+TEST(Tokenizer, DecodeWithSpecialTokens) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {2, 76, 109, 3};
+    
+    std::string text = tok.decode(tokens);
+    
+    EXPECT_EQ(text, "<BOS>Hi<EOS>");
+}
+
+TEST(Tokenizer, DecodeEmptyVector) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string text = tok.decode({});
+    
+    EXPECT_EQ(text, "");
+}
+
+TEST(Tokenizer, DecodePadAndUnkTokens) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {0, 1};
+    
+    std::string text = tok.decode(tokens);
+    
+    EXPECT_EQ(text, "<PAD><UNK>");
+}
+
+TEST(Tokenizer, DecodeInvalidTokens) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {-1, 200, 76};
+    
+    std::string text = tok.decode(tokens);
+    
+    EXPECT_EQ(text, "<?><?>" + std::string("H"));
+}
+
+TEST(Tokenizer, EncodeDecodeRoundtrip) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string original = "Hello, World! 123";
+    
+    std::vector<int> tokens = tok.encode(original);
+    std::string decoded = tok.decode(tokens);
+    
+    EXPECT_EQ(decoded, original);
+}
+
+TEST(Tokenizer, EncodeDecodeRoundtripWithSpecialTokens) {
+    tokenizer::CharTokenizer tok(true);
+    
+    std::string original = "Test";
+    
+    std::vector<int> tokens = tok.encode(original);
+    std::string decoded = tok.decode(tokens);
+    
+    EXPECT_EQ(decoded, "<BOS>Test<EOS>");
+}
+
+TEST(Tokenizer, IsSpecialToken) {
+    tokenizer::CharTokenizer tok;
+    
+    EXPECT_TRUE(tok.is_special_token(0));
+    EXPECT_TRUE(tok.is_special_token(1));
+    EXPECT_TRUE(tok.is_special_token(2));
+    EXPECT_TRUE(tok.is_special_token(3));
+    
+    EXPECT_FALSE(tok.is_special_token(4));
+    EXPECT_FALSE(tok.is_special_token(76));
+    EXPECT_FALSE(tok.is_special_token(131));
+}
+
+TEST(Tokenizer, HandlesAllASCII) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string all_ascii;
+    for (int i = 32; i < 127; i++) {
+        all_ascii += static_cast<char>(i);
+    }
+    
+    std::vector<int> tokens = tok.encode(all_ascii);
+    std::string decoded = tok.decode(tokens);
+    
+    EXPECT_EQ(decoded, all_ascii);
+}
+
+TEST(Tokenizer, ConsistentEncoding) {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string text = "Same text";
+    
+    std::vector<int> tokens1 = tok.encode(text);
+    std::vector<int> tokens2 = tok.encode(text);
+    
+    EXPECT_EQ(tokens1.size(), tokens2.size());
+    for (size_t i = 0; i < tokens1.size(); i++) {
+        EXPECT_EQ(tokens1[i], tokens2[i]);
+    }
+}

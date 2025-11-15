@@ -1945,3 +1945,204 @@ TEST_CASE("Generate error handling") {
         generation::GenerationConfig()
     ));
 }
+
+// ===== TOKENIZER TESTS =====
+#include "tokenizer.h"
+
+TEST_CASE("Tokenizer vocabulary size") {
+    tokenizer::CharTokenizer tok;
+    
+    // 4 special tokens + 128 ASCII characters = 132
+    CHECK(tok.vocab_size() == 132);
+}
+
+TEST_CASE("Tokenizer special token constants") {
+    CHECK(tokenizer::CharTokenizer::PAD_TOKEN == 0);
+    CHECK(tokenizer::CharTokenizer::UNK_TOKEN == 1);
+    CHECK(tokenizer::CharTokenizer::BOS_TOKEN == 2);
+    CHECK(tokenizer::CharTokenizer::EOS_TOKEN == 3);
+}
+
+TEST_CASE("Tokenizer encode simple text") {
+    tokenizer::CharTokenizer tok(false);  // No special tokens
+    
+    std::vector<int> tokens = tok.encode("Hi");
+    
+    // 'H' = ASCII 72 → token 76 (72+4)
+    // 'i' = ASCII 105 → token 109 (105+4)
+    CHECK(tokens.size() == 2);
+    CHECK(tokens[0] == 76);   // 'H'
+    CHECK(tokens[1] == 109);  // 'i'
+}
+
+TEST_CASE("Tokenizer encode with special tokens") {
+    tokenizer::CharTokenizer tok(true);  // Add BOS/EOS
+    
+    std::vector<int> tokens = tok.encode("Hi");
+    
+    // Should be: [BOS, 'H', 'i', EOS]
+    CHECK(tokens.size() == 4);
+    CHECK(tokens[0] == 2);    // BOS
+    CHECK(tokens[1] == 76);   // 'H'
+    CHECK(tokens[2] == 109);  // 'i'
+    CHECK(tokens[3] == 3);    // EOS
+}
+
+TEST_CASE("Tokenizer encode empty string") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("");
+    
+    CHECK(tokens.empty());
+}
+
+TEST_CASE("Tokenizer encode empty string with special tokens") {
+    tokenizer::CharTokenizer tok(true);
+    
+    std::vector<int> tokens = tok.encode("");
+    
+    // Should just be [BOS, EOS]
+    CHECK(tokens.size() == 2);
+    CHECK(tokens[0] == 2);  // BOS
+    CHECK(tokens[1] == 3);  // EOS
+}
+
+TEST_CASE("Tokenizer encode numbers and symbols") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("123!@#");
+    
+    CHECK(tokens.size() == 6);
+    
+    // All should be valid tokens
+    for (int token : tokens) {
+        CHECK(token >= 4);
+        CHECK(token < 132);
+    }
+}
+
+TEST_CASE("Tokenizer encode spaces and newlines") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = tok.encode("A B\nC");
+    
+    // 'A', ' ', 'B', '\n', 'C'
+    CHECK(tokens.size() == 5);
+}
+
+TEST_CASE("Tokenizer decode simple tokens") {
+    tokenizer::CharTokenizer tok(false);
+    
+    // 'H' = 76, 'i' = 109
+    std::vector<int> tokens = {76, 109};
+    
+    std::string text = tok.decode(tokens);
+    
+    CHECK(text == "Hi");
+}
+
+TEST_CASE("Tokenizer decode with special tokens") {
+    tokenizer::CharTokenizer tok(false);
+    
+    // [BOS, 'H', 'i', EOS]
+    std::vector<int> tokens = {2, 76, 109, 3};
+    
+    std::string text = tok.decode(tokens);
+    
+    CHECK(text == "<BOS>Hi<EOS>");
+}
+
+TEST_CASE("Tokenizer decode empty vector") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string text = tok.decode({});
+    
+    CHECK(text == "");
+}
+
+TEST_CASE("Tokenizer decode PAD and UNK tokens") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {0, 1};  // PAD, UNK
+    
+    std::string text = tok.decode(tokens);
+    
+    CHECK(text == "<PAD><UNK>");
+}
+
+TEST_CASE("Tokenizer decode invalid tokens") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::vector<int> tokens = {-1, 200, 76};  // Invalid, invalid, valid
+    
+    std::string text = tok.decode(tokens);
+    
+    // Invalid tokens should be rendered as <?>
+    CHECK(text == "<?><?>" + std::string("H"));
+}
+
+TEST_CASE("Tokenizer encode-decode roundtrip") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string original = "Hello, World! 123";
+    
+    std::vector<int> tokens = tok.encode(original);
+    std::string decoded = tok.decode(tokens);
+    
+    CHECK(decoded == original);
+}
+
+TEST_CASE("Tokenizer encode-decode roundtrip with special tokens") {
+    tokenizer::CharTokenizer tok(true);
+    
+    std::string original = "Test";
+    
+    std::vector<int> tokens = tok.encode(original);
+    std::string decoded = tok.decode(tokens);
+    
+    // With special tokens, decode includes <BOS> and <EOS>
+    CHECK(decoded == "<BOS>Test<EOS>");
+}
+
+TEST_CASE("Tokenizer is_special_token") {
+    tokenizer::CharTokenizer tok;
+    
+    CHECK(tok.is_special_token(0));   // PAD
+    CHECK(tok.is_special_token(1));   // UNK
+    CHECK(tok.is_special_token(2));   // BOS
+    CHECK(tok.is_special_token(3));   // EOS
+    
+    CHECK_FALSE(tok.is_special_token(4));    // First character token
+    CHECK_FALSE(tok.is_special_token(76));   // 'H'
+    CHECK_FALSE(tok.is_special_token(131));  // Last valid token
+}
+
+TEST_CASE("Tokenizer handles all ASCII characters") {
+    tokenizer::CharTokenizer tok(false);
+    
+    // Build string with all printable ASCII
+    std::string all_ascii;
+    for (int i = 32; i < 127; i++) {  // Printable ASCII
+        all_ascii += static_cast<char>(i);
+    }
+    
+    std::vector<int> tokens = tok.encode(all_ascii);
+    std::string decoded = tok.decode(tokens);
+    
+    CHECK(decoded == all_ascii);
+}
+
+TEST_CASE("Tokenizer consistent encoding") {
+    tokenizer::CharTokenizer tok(false);
+    
+    std::string text = "Same text";
+    
+    std::vector<int> tokens1 = tok.encode(text);
+    std::vector<int> tokens2 = tok.encode(text);
+    
+    // Should be identical
+    CHECK(tokens1.size() == tokens2.size());
+    for (size_t i = 0; i < tokens1.size(); i++) {
+        CHECK(tokens1[i] == tokens2[i]);
+    }
+}
