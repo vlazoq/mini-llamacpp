@@ -401,9 +401,21 @@ std::vector<uint8_t> GGUFParser::read_tensor_data(const std::string& name) {
     uint64_t data_position = tensor_data_offset + info->offset;
     file.seekg(data_position, std::ios::beg);
     
+    if (!file) {
+        throw std::runtime_error("Failed to seek to tensor data for: " + name);
+    }
+    
+    // Check how much data is actually available
+    file.seekg(0, std::ios::end);
+    std::streampos file_size = file.tellg();
+    file.seekg(data_position, std::ios::beg);
+    
+    uint64_t available_bytes = static_cast<uint64_t>(file_size) - data_position;
+    uint64_t bytes_to_read = std::min(info->size_bytes, available_bytes);
+    
     // Read raw bytes
-    std::vector<uint8_t> data(info->size_bytes);
-    file.read(reinterpret_cast<char*>(data.data()), info->size_bytes);
+    std::vector<uint8_t> data(bytes_to_read);
+    file.read(reinterpret_cast<char*>(data.data()), bytes_to_read);
     
     if (!file) {
         throw std::runtime_error("Failed to read tensor data for: " + name);
