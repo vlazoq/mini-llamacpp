@@ -2539,8 +2539,8 @@ TEST_CASE("Quantization - Q4_0 Tensor Dequantization") {
         
         auto shape = result.get_shape();
         CHECK(shape[0] == 32);
-        CHECK(result.at({0}) == doctest::Approx(0.0f));
-        CHECK(result.at({31}) == doctest::Approx(0.0f));
+        CHECK(result.at(0, 0) == doctest::Approx(0.0f));
+        CHECK(result.at(31, 0) == doctest::Approx(0.0f));
     }
     
     SUBCASE("Multiple blocks") {
@@ -2575,8 +2575,8 @@ TEST_CASE("Quantization - Q8_0 Tensor Dequantization") {
         
         auto shape = result.get_shape();
         CHECK(shape[0] == 32);
-        CHECK(result.at({0}) == doctest::Approx(5.0f));
-        CHECK(result.at({31}) == doctest::Approx(5.0f));
+        CHECK(result.at(0, 0) == doctest::Approx(5.0f));
+        CHECK(result.at(31, 0) == doctest::Approx(5.0f));
     }
     
     SUBCASE("Multiple blocks") {

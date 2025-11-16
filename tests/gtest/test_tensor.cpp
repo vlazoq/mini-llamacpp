@@ -2382,8 +2382,8 @@ TEST(QuantizationTest, Q4_0TensorSingleBlock) {
     
     auto shape = result.get_shape();
     EXPECT_EQ(shape[0], 32);
-    EXPECT_NEAR(result.at({0}), 0.0f, 1e-6);
-    EXPECT_NEAR(result.at({31}), 0.0f, 1e-6);
+    EXPECT_NEAR(result.at(0, 0), 0.0f, 1e-6);
+    EXPECT_NEAR(result.at(31, 0), 0.0f, 1e-6);
 }
 
 TEST(QuantizationTest, Q4_0TensorMultipleBlocks) {
@@ -2416,8 +2416,8 @@ TEST(QuantizationTest, Q8_0TensorSingleBlock) {
     
     auto shape = result.get_shape();
     EXPECT_EQ(shape[0], 32);
-    EXPECT_NEAR(result.at({0}), 5.0f, 1e-6);
-    EXPECT_NEAR(result.at({31}), 5.0f, 1e-6);
+    EXPECT_NEAR(result.at(0, 0), 5.0f, 1e-6);
+    EXPECT_NEAR(result.at(31, 0), 5.0f, 1e-6);
 }
 
 TEST(QuantizationTest, Q8_0TensorMultipleBlocks) {

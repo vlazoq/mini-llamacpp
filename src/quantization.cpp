@@ -117,7 +117,7 @@ Tensor dequantize_q4_0(const std::vector<uint8_t>& data, size_t n_elements) {
         }
     }
     
-    return Tensor({static_cast<int>(n_elements)}, output);
+    return Tensor({static_cast<int>(n_elements), 1}, output);
 }
 
 // Dequantize entire Q8_0 tensor
@@ -151,7 +151,7 @@ Tensor dequantize_q8_0(const std::vector<uint8_t>& data, size_t n_elements) {
         }
     }
     
-    return Tensor({static_cast<int>(n_elements)}, output);
+    return Tensor({static_cast<int>(n_elements), 1}, output);
 }
 
 }  // namespace quantization
