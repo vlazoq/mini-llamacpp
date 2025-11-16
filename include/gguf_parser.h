@@ -50,7 +50,7 @@ enum class TensorType : uint32_t {
 };
 
 // Metadata value (can hold different types)
-using MetadataValue = std::variant
+using MetadataValue = std::variant<
     uint8_t, int8_t, uint16_t, int16_t,
     uint32_t, int32_t, uint64_t, int64_t,
     float, double, bool, std::string,

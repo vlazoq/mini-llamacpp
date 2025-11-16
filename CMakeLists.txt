@@ -21,6 +21,7 @@ set(SOURCES
     src/sampling.cpp
     src/generation.cpp
     src/tokenizer.cpp
+    src/gguf_parser.cpp
 )
 
 

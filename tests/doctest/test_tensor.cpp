@@ -6,6 +6,9 @@
 // Include what we're testing
 #include "tensor.h"
 
+#include "gguf_parser.h"
+#include <fstream>
+
 // ===== BASIC TENSOR CREATION TESTS =====
 
 // TEST_CASE: Defines a single test with a description
@@ -2144,5 +2147,274 @@ TEST_CASE("Tokenizer consistent encoding") {
     CHECK(tokens1.size() == tokens2.size());
     for (size_t i = 0; i < tokens1.size(); i++) {
         CHECK(tokens1[i] == tokens2[i]);
+    }
+}
+
+// ============================================================================
+// GGUF Parser Tests
+// ============================================================================
+
+// Helper function to create a minimal valid GGUF file in memory
+// This creates a mock GGUF file without needing a real 4GB model
+std::vector<uint8_t> create_mock_gguf_file() {
+    std::vector<uint8_t> data;
+    
+    auto append_uint32 = [&data](uint32_t value) {
+        data.push_back(value & 0xFF);
+        data.push_back((value >> 8) & 0xFF);
+        data.push_back((value >> 16) & 0xFF);
+        data.push_back((value >> 24) & 0xFF);
+    };
+    
+    auto append_uint64 = [&data](uint64_t value) {
+        for (int i = 0; i < 8; i++) {
+            data.push_back((value >> (i * 8)) & 0xFF);
+        }
+    };
+    
+    auto append_string = [&data, &append_uint64](const std::string& str) {
+        append_uint64(str.length());
+        data.insert(data.end(), str.begin(), str.end());
+    };
+    
+    append_uint32(0x46554747);
+    append_uint32(3);
+    append_uint64(2);
+    append_uint64(3);
+    
+    append_string("general.architecture");
+    append_uint32(8);
+    append_string("llama");
+    
+    append_string("llama.embedding_length");
+    append_uint32(4);
+    append_uint32(4096);
+    
+    append_string("llama.block_count");
+    append_uint32(4);
+    append_uint32(32);
+    
+    append_string("token_embd.weight");
+    append_uint32(2);
+    append_uint64(32000);
+    append_uint64(4096);
+    append_uint32(0);
+    append_uint64(0);
+    
+    append_string("output.weight");
+    append_uint32(2);
+    append_uint64(32000);
+    append_uint64(4096);
+    append_uint32(0);
+    append_uint64(4096 * 32000 * 4);
+    
+    while (data.size() % 32 != 0) {
+        data.push_back(0);
+    }
+    
+    size_t tensor1_size = 16 * 1024;
+    for (size_t i = 0; i < tensor1_size; i++) {
+        data.push_back(static_cast<uint8_t>(i % 256));
+    }
+    
+    return data;
+}
+
+// Helper to write vector to temporary file
+std::string write_temp_gguf(const std::vector<uint8_t>& data) {
+    std::string temp_path = "test_mock.gguf";
+    std::ofstream file(temp_path, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(data.data()), data.size());
+    file.close();
+    return temp_path;
+}
+
+TEST_CASE("GGUF Parser - File Opening") {
+    CHECK_THROWS_AS(gguf::GGUFParser("/nonexistent/file.gguf"), std::runtime_error);
+}
+
+TEST_CASE("GGUF Parser - Header Parsing") {
+    auto mock_data = create_mock_gguf_file();
+    std::string temp_file = write_temp_gguf(mock_data);
+    
+    gguf::GGUFParser parser(temp_file);
+    
+    SUBCASE("Parser not parsed initially") {
+        CHECK(parser.is_parsed() == false);
+    }
+    
+    SUBCASE("Parse succeeds") {
+        CHECK_NOTHROW(parser.parse());
+        CHECK(parser.is_parsed() == true);
+    }
+    
+    SUBCASE("Version is correct") {
+        parser.parse();
+        CHECK(parser.get_version() == 3);
+    }
+    
+    SUBCASE("Tensor count is correct") {
+        parser.parse();
+        CHECK(parser.get_tensor_count() == 2);
+    }
+    
+    SUBCASE("Metadata count is correct") {
+        parser.parse();
+        CHECK(parser.get_metadata_count() == 3);
+    }
+    
+    std::remove(temp_file.c_str());
+}
+
+TEST_CASE("GGUF Parser - Metadata Parsing") {
+    auto mock_data = create_mock_gguf_file();
+    std::string temp_file = write_temp_gguf(mock_data);
+    
+    gguf::GGUFParser parser(temp_file);
+    parser.parse();
+    
+    SUBCASE("String metadata") {
+        std::string arch = parser.get_string("general.architecture");
+        CHECK(arch == "llama");
+    }
+    
+    SUBCASE("String metadata with default") {
+        std::string missing = parser.get_string("nonexistent.key", "default");
+        CHECK(missing == "default");
+    }
+    
+    SUBCASE("Uint32 metadata") {
+        uint32_t embd_len = parser.get_uint32("llama.embedding_length");
+        CHECK(embd_len == 4096);
+        
+        uint32_t block_count = parser.get_uint32("llama.block_count");
+        CHECK(block_count == 32);
+    }
+    
+    SUBCASE("Uint32 metadata with default") {
+        uint32_t missing = parser.get_uint32("nonexistent.key", 999);
+        CHECK(missing == 999);
+    }
+    
+    SUBCASE("Raw metadata access") {
+        const gguf::MetadataValue* value = parser.get_metadata("general.architecture");
+        CHECK(value);
+        
+        const gguf::MetadataValue* missing = parser.get_metadata("nonexistent");
+        CHECK_FALSE(missing);
+    }
+    
+    std::remove(temp_file.c_str());
+}
+
+TEST_CASE("GGUF Parser - Tensor Info") {
+    auto mock_data = create_mock_gguf_file();
+    std::string temp_file = write_temp_gguf(mock_data);
+    
+    gguf::GGUFParser parser(temp_file);
+    parser.parse();
+    
+    SUBCASE("Tensor exists") {
+        const gguf::TensorInfo* info = parser.get_tensor_info("token_embd.weight");
+        CHECK(info);
+    }
+    
+    SUBCASE("Tensor not exists") {
+        const gguf::TensorInfo* info = parser.get_tensor_info("nonexistent.tensor");
+        CHECK_FALSE(info);
+    }
+    
+    SUBCASE("Tensor shape is correct") {
+        const gguf::TensorInfo* info = parser.get_tensor_info("token_embd.weight");
+        REQUIRE(info);
+        
+        CHECK(info->shape.size() == 2);
+        CHECK(info->shape[0] == 4096);
+        CHECK(info->shape[1] == 32000);
+    }
+    
+    SUBCASE("Tensor type is correct") {
+        const gguf::TensorInfo* info = parser.get_tensor_info("token_embd.weight");
+        REQUIRE(info);
+        
+        CHECK(info->type == gguf::TensorType::F32);
+    }
+    
+    SUBCASE("Tensor num_elements") {
+        const gguf::TensorInfo* info = parser.get_tensor_info("token_embd.weight");
+        REQUIRE(info);
+        
+        CHECK(info->num_elements() == 4096 * 32000);
+    }
+    
+    SUBCASE("Get all tensor names") {
+        auto names = parser.get_tensor_names();
+        CHECK(names.size() == 2);
+        
+        bool has_embd = false;
+        bool has_output = false;
+        for (const auto& name : names) {
+            if (name == "token_embd.weight") has_embd = true;
+            if (name == "output.weight") has_output = true;
+        }
+        CHECK(has_embd);
+        CHECK(has_output);
+    }
+    
+    std::remove(temp_file.c_str());
+}
+
+TEST_CASE("GGUF Parser - Tensor Data Reading") {
+    auto mock_data = create_mock_gguf_file();
+    std::string temp_file = write_temp_gguf(mock_data);
+    
+    gguf::GGUFParser parser(temp_file);
+    parser.parse();
+    
+    SUBCASE("Read tensor data succeeds") {
+        CHECK_NOTHROW(parser.read_tensor_data("token_embd.weight"));
+    }
+    
+    SUBCASE("Read non-existent tensor fails") {
+        CHECK_THROWS_AS(parser.read_tensor_data("nonexistent.tensor"), std::runtime_error);
+    }
+    
+    SUBCASE("Read before parse fails") {
+        gguf::GGUFParser parser2(temp_file);
+        CHECK_THROWS_AS(parser2.read_tensor_data("token_embd.weight"), std::runtime_error);
+    }
+    
+    std::remove(temp_file.c_str());
+}
+
+TEST_CASE("GGUF Parser - Invalid Files") {
+    SUBCASE("Invalid magic number") {
+        std::vector<uint8_t> bad_data;
+        for (int i = 0; i < 4; i++) bad_data.push_back(0xFF);
+        for (int i = 0; i < 4; i++) bad_data.push_back(0x03);
+        
+        std::string temp_file = write_temp_gguf(bad_data);
+        gguf::GGUFParser parser(temp_file);
+        
+        CHECK_THROWS_AS(parser.parse(), std::runtime_error);
+        std::remove(temp_file.c_str());
+    }
+    
+    SUBCASE("Invalid version") {
+        std::vector<uint8_t> bad_data;
+        bad_data.push_back(0x47);
+        bad_data.push_back(0x47);
+        bad_data.push_back(0x55);
+        bad_data.push_back(0x46);
+        bad_data.push_back(99);
+        bad_data.push_back(0);
+        bad_data.push_back(0);
+        bad_data.push_back(0);
+        
+        std::string temp_file = write_temp_gguf(bad_data);
+        gguf::GGUFParser parser(temp_file);
+        
+        CHECK_THROWS_AS(parser.parse(), std::runtime_error);
+        std::remove(temp_file.c_str());
     }
 }
