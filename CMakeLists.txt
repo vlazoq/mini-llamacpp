@@ -71,3 +71,9 @@ add_test(NAME GtestSuite COMMAND test_gtest)
 # add_executable(phase1_demo
 #    ${SOURCES}
 #    src/phase2_demo.cpp)
+
+# Phase 3A Demo
+add_executable(phase3a_demo
+    ${SOURCES}
+    src/phase3a_demo.cpp
+)
