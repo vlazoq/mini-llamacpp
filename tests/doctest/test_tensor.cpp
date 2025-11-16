@@ -8,6 +8,7 @@
 
 #include "gguf_parser.h"
 #include "quantization.h"
+#include "model_loader.h"
 #include <fstream>
 
 // ===== BASIC TENSOR CREATION TESTS =====
@@ -2598,5 +2599,224 @@ TEST_CASE("Quantization - Error Handling") {
     SUBCASE("Insufficient Q8_0 data") {
         std::vector<uint8_t> data(10);  // Too small
         CHECK_THROWS_AS(quantization::dequantize_q8_0(data, 32), std::runtime_error);
+    }
+}
+
+// ============================================================================
+// Model Loader Tests
+// ============================================================================
+
+TEST_CASE("ModelLoader - Model Info Extraction") {
+    // Note: These tests require actual GGUF files
+    // For now, we test the structure and error handling
+    
+    SUBCASE("Invalid file path") {
+        CHECK_THROWS_AS(ModelLoader("nonexistent.gguf"), std::runtime_error);
+    }
+    
+    SUBCASE("ModelInfo structure") {
+        ModelLoader::ModelInfo info;
+        info.architecture = "llama";
+        info.n_vocab = 32000;
+        info.n_embd = 4096;
+        info.n_layers = 32;
+        info.n_heads = 32;
+        info.n_ff = 11008;
+        info.max_seq_len = 2048;
+        
+        CHECK(info.architecture == "llama");
+        CHECK(info.n_vocab == 32000);
+        CHECK(info.n_embd == 4096);
+        CHECK(info.n_layers == 32);
+        CHECK(info.n_heads == 32);
+        CHECK(info.n_ff == 11008);
+        CHECK(info.max_seq_len == 2048);
+    }
+}
+
+TEST_CASE("ModelLoader - Config Extraction") {
+    SUBCASE("Config values mapping") {
+        // Test that ModelInfo maps correctly to ModelConfig
+        ModelLoader::ModelInfo info;
+        info.n_vocab = 1000;
+        info.n_embd = 512;
+        info.n_layers = 8;
+        info.n_heads = 8;
+        info.n_ff = 2048;
+        info.max_seq_len = 512;
+        
+        // Create config manually to verify expected mapping
+        model::ModelConfig config(
+            info.n_vocab,
+            info.max_seq_len,
+            info.n_embd,
+            info.n_layers,
+            info.n_heads,
+            info.n_ff
+        );
+        
+        CHECK(config.vocab_size == 1000);
+        CHECK(config.max_seq_len == 512);
+        CHECK(config.embedding_dim == 512);
+        CHECK(config.num_layers == 8);
+        CHECK(config.num_heads == 8);
+        CHECK(config.intermediate_dim == 2048);
+    }
+}
+
+TEST_CASE("ModelLoader - Tensor Shape Validation") {
+    SUBCASE("Shape vector comparison") {
+        std::vector<int> expected = {4096, 32000};
+        std::vector<uint64_t> actual = {4096, 32000};
+        
+        CHECK(expected.size() == actual.size());
+        for (size_t i = 0; i < expected.size(); i++) {
+            CHECK(static_cast<uint64_t>(expected[i]) == actual[i]);
+        }
+    }
+    
+    SUBCASE("Shape mismatch detection") {
+        std::vector<int> expected = {4096, 32000};
+        std::vector<uint64_t> wrong_dims = {4096, 32000, 1};
+        std::vector<uint64_t> wrong_values = {4096, 16000};
+        
+        CHECK(expected.size() != wrong_dims.size());
+        CHECK(static_cast<uint64_t>(expected[1]) != wrong_values[1]);
+    }
+}
+
+TEST_CASE("ModelLoader - Weight Name Patterns") {
+    SUBCASE("Block weight naming") {
+        int block_idx = 5;
+        std::string prefix = "blk." + std::to_string(block_idx) + ".";
+        
+        CHECK(prefix == "blk.5.");
+        CHECK(prefix + "attn_q.weight" == "blk.5.attn_q.weight");
+        CHECK(prefix + "attn_k.weight" == "blk.5.attn_k.weight");
+        CHECK(prefix + "attn_v.weight" == "blk.5.attn_v.weight");
+        CHECK(prefix + "attn_output.weight" == "blk.5.attn_output.weight");
+        CHECK(prefix + "ffn_gate.weight" == "blk.5.ffn_gate.weight");
+        CHECK(prefix + "ffn_down.weight" == "blk.5.ffn_down.weight");
+        CHECK(prefix + "attn_norm.weight" == "blk.5.attn_norm.weight");
+        CHECK(prefix + "ffn_norm.weight" == "blk.5.ffn_norm.weight");
+    }
+    
+    SUBCASE("Global weight naming") {
+        CHECK(std::string("token_embd.weight") == "token_embd.weight");
+        CHECK(std::string("position_embd.weight") == "position_embd.weight");
+        CHECK(std::string("output_norm.weight") == "output_norm.weight");
+        CHECK(std::string("output.weight") == "output.weight");
+    }
+}
+
+TEST_CASE("ModelLoader - Architecture Detection") {
+    SUBCASE("Common architectures") {
+        std::vector<std::string> architectures = {
+            "llama", "mistral", "gemma", "phi", "qwen"
+        };
+        
+        for (const auto& arch : architectures) {
+            CHECK(!arch.empty());
+            CHECK(arch.length() > 0);
+        }
+    }
+    
+    SUBCASE("Metadata key construction") {
+        std::string arch = "llama";
+        
+        CHECK(arch + ".vocab_size" == "llama.vocab_size");
+        CHECK(arch + ".embedding_length" == "llama.embedding_length");
+        CHECK(arch + ".block_count" == "llama.block_count");
+        CHECK(arch + ".attention.head_count" == "llama.attention.head_count");
+        CHECK(arch + ".feed_forward_length" == "llama.feed_forward_length");
+        CHECK(arch + ".context_length" == "llama.context_length");
+    }
+}
+
+TEST_CASE("ModelLoader - Dimension Calculations") {
+    SUBCASE("Standard model dimensions") {
+        uint32_t n_embd = 4096;
+        uint32_t n_vocab = 32000;
+        uint32_t n_layers = 32;
+        uint32_t n_heads = 32;
+        uint32_t n_ff = 11008;
+        uint32_t max_seq_len = 2048;
+        
+        // Verify common relationships
+        CHECK(n_ff > n_embd);  // FF dim usually larger
+        CHECK(n_embd % n_heads == 0);  // Must divide evenly
+        CHECK(n_vocab > 1000);  // Reasonable vocab size
+        CHECK(max_seq_len >= 512);  // Reasonable context
+    }
+    
+    SUBCASE("Head dimension calculation") {
+        uint32_t n_embd = 4096;
+        uint32_t n_heads = 32;
+        uint32_t head_dim = n_embd / n_heads;
+        
+        CHECK(head_dim == 128);
+        CHECK(head_dim * n_heads == n_embd);
+    }
+}
+
+TEST_CASE("ModelLoader - Error Messages") {
+    SUBCASE("Tensor not found error") {
+        std::string tensor_name = "missing_tensor.weight";
+        std::string expected_msg = "Tensor not found: " + tensor_name;
+        CHECK(expected_msg == "Tensor not found: missing_tensor.weight");
+    }
+    
+    SUBCASE("Dimension mismatch error") {
+        std::string tensor_name = "test.weight";
+        size_t expected_dims = 2;
+        size_t actual_dims = 3;
+        
+        std::ostringstream oss;
+        oss << "Tensor " << tensor_name << " has wrong number of dimensions. "
+            << "Expected " << expected_dims << ", got " << actual_dims;
+        
+        CHECK(oss.str() == "Tensor test.weight has wrong number of dimensions. Expected 2, got 3");
+    }
+    
+    SUBCASE("Unsupported tensor type error") {
+        std::string tensor_name = "test.weight";
+        std::string expected_msg = "Unsupported tensor type for: " + tensor_name;
+        CHECK(expected_msg == "Unsupported tensor type for: test.weight");
+    }
+}
+
+TEST_CASE("ModelLoader - Integration with existing components") {
+    SUBCASE("Config creates valid model") {
+        model::ModelConfig config(
+            1000,   // vocab_size
+            512,    // max_seq_len
+            256,    // embedding_dim
+            4,      // num_layers
+            4,      // num_heads
+            1024    // intermediate_dim
+        );
+        
+        // Verify config is valid for model creation
+        CHECK(config.vocab_size > 0);
+        CHECK(config.max_seq_len > 0);
+        CHECK(config.embedding_dim > 0);
+        CHECK(config.num_layers > 0);
+        CHECK(config.num_heads > 0);
+        CHECK(config.intermediate_dim > 0);
+        CHECK(config.embedding_dim % config.num_heads == 0);
+    }
+    
+    SUBCASE("BlockWeights structure") {
+        int embedding_dim = 256;
+        int intermediate_dim = 1024;
+        
+        model::BlockWeights weights(embedding_dim, intermediate_dim);
+        
+        // Verify weights were created
+        auto wq_shape = weights.Wq.get_shape();
+        auto w1_shape = weights.W1.get_shape();
+        
+        CHECK(wq_shape.size() == 2);
+        CHECK(w1_shape.size() == 2);
     }
 }

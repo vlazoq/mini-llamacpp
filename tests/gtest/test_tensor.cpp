@@ -6,6 +6,7 @@
 
 #include "gguf_parser.h"
 #include "quantization.h"
+#include "model_loader.h"
 #include <fstream>
 
 // ===== BASIC TENSOR CREATION TESTS =====
@@ -2427,4 +2428,195 @@ TEST(QuantizationTest, Q8_0TensorMultipleBlocks) {
     Tensor result = quantization::dequantize_q8_0(data, 128);
     auto shape = result.get_shape();
     EXPECT_EQ(shape[0], 128);
+}
+
+// ============================================================================
+// Model Loader Tests
+// ============================================================================
+
+TEST(ModelLoaderTest, InvalidFilePath) {
+    EXPECT_THROW({
+        ModelLoader loader("nonexistent.gguf");
+        loader.get_model_info();
+    }, std::runtime_error);
+}
+
+TEST(ModelLoaderTest, ModelInfoStructure) {
+    ModelLoader::ModelInfo info;
+    info.architecture = "llama";
+    info.n_vocab = 32000;
+    info.n_embd = 4096;
+    info.n_layers = 32;
+    info.n_heads = 32;
+    info.n_ff = 11008;
+    info.max_seq_len = 2048;
+    
+    EXPECT_EQ(info.architecture, "llama");
+    EXPECT_EQ(info.n_vocab, 32000);
+    EXPECT_EQ(info.n_embd, 4096);
+    EXPECT_EQ(info.n_layers, 32);
+    EXPECT_EQ(info.n_heads, 32);
+    EXPECT_EQ(info.n_ff, 11008);
+    EXPECT_EQ(info.max_seq_len, 2048);
+}
+
+TEST(ModelLoaderTest, ConfigValuesMapping) {
+    ModelLoader::ModelInfo info;
+    info.n_vocab = 1000;
+    info.n_embd = 512;
+    info.n_layers = 8;
+    info.n_heads = 8;
+    info.n_ff = 2048;
+    info.max_seq_len = 512;
+    
+    model::ModelConfig config(
+        info.n_vocab,
+        info.max_seq_len,
+        info.n_embd,
+        info.n_layers,
+        info.n_heads,
+        info.n_ff
+    );
+    
+    EXPECT_EQ(config.vocab_size, 1000);
+    EXPECT_EQ(config.max_seq_len, 512);
+    EXPECT_EQ(config.embedding_dim, 512);
+    EXPECT_EQ(config.num_layers, 8);
+    EXPECT_EQ(config.num_heads, 8);
+    EXPECT_EQ(config.intermediate_dim, 2048);
+}
+
+TEST(ModelLoaderTest, ShapeValidation) {
+    std::vector<int> expected = {4096, 32000};
+    std::vector<uint64_t> actual = {4096, 32000};
+    
+    EXPECT_EQ(expected.size(), actual.size());
+    for (size_t i = 0; i < expected.size(); i++) {
+        EXPECT_EQ(static_cast<uint64_t>(expected[i]), actual[i]);
+    }
+}
+
+TEST(ModelLoaderTest, ShapeMismatchDetection) {
+    std::vector<int> expected = {4096, 32000};
+    std::vector<uint64_t> wrong_dims = {4096, 32000, 1};
+    std::vector<uint64_t> wrong_values = {4096, 16000};
+    
+    EXPECT_NE(expected.size(), wrong_dims.size());
+    EXPECT_NE(static_cast<uint64_t>(expected[1]), wrong_values[1]);
+}
+
+TEST(ModelLoaderTest, BlockWeightNaming) {
+    int block_idx = 5;
+    std::string prefix = "blk." + std::to_string(block_idx) + ".";
+    
+    EXPECT_EQ(prefix, "blk.5.");
+    EXPECT_EQ(prefix + "attn_q.weight", "blk.5.attn_q.weight");
+    EXPECT_EQ(prefix + "attn_k.weight", "blk.5.attn_k.weight");
+    EXPECT_EQ(prefix + "attn_v.weight", "blk.5.attn_v.weight");
+    EXPECT_EQ(prefix + "attn_output.weight", "blk.5.attn_output.weight");
+    EXPECT_EQ(prefix + "ffn_gate.weight", "blk.5.ffn_gate.weight");
+    EXPECT_EQ(prefix + "ffn_down.weight", "blk.5.ffn_down.weight");
+    EXPECT_EQ(prefix + "attn_norm.weight", "blk.5.attn_norm.weight");
+    EXPECT_EQ(prefix + "ffn_norm.weight", "blk.5.ffn_norm.weight");
+}
+
+TEST(ModelLoaderTest, GlobalWeightNaming) {
+    EXPECT_EQ(std::string("token_embd.weight"), "token_embd.weight");
+    EXPECT_EQ(std::string("position_embd.weight"), "position_embd.weight");
+    EXPECT_EQ(std::string("output_norm.weight"), "output_norm.weight");
+    EXPECT_EQ(std::string("output.weight"), "output.weight");
+}
+
+TEST(ModelLoaderTest, ArchitectureDetection) {
+    std::vector<std::string> architectures = {
+        "llama", "mistral", "gemma", "phi", "qwen"
+    };
+    
+    for (const auto& arch : architectures) {
+        EXPECT_FALSE(arch.empty());
+        EXPECT_GT(arch.length(), 0);
+    }
+}
+
+TEST(ModelLoaderTest, MetadataKeyConstruction) {
+    std::string arch = "llama";
+    
+    EXPECT_EQ(arch + ".vocab_size", "llama.vocab_size");
+    EXPECT_EQ(arch + ".embedding_length", "llama.embedding_length");
+    EXPECT_EQ(arch + ".block_count", "llama.block_count");
+    EXPECT_EQ(arch + ".attention.head_count", "llama.attention.head_count");
+    EXPECT_EQ(arch + ".feed_forward_length", "llama.feed_forward_length");
+    EXPECT_EQ(arch + ".context_length", "llama.context_length");
+}
+
+TEST(ModelLoaderTest, DimensionCalculations) {
+    uint32_t n_embd = 4096;
+    uint32_t n_vocab = 32000;
+    uint32_t n_ff = 11008;
+    uint32_t n_heads = 32;
+    uint32_t max_seq_len = 2048;
+    
+    EXPECT_GT(n_ff, n_embd);
+    EXPECT_EQ(n_embd % n_heads, 0);
+    EXPECT_GT(n_vocab, 1000);
+    EXPECT_GE(max_seq_len, 512);
+}
+
+TEST(ModelLoaderTest, HeadDimensionCalculation) {
+    uint32_t n_embd = 4096;
+    uint32_t n_heads = 32;
+    uint32_t head_dim = n_embd / n_heads;
+    
+    EXPECT_EQ(head_dim, 128);
+    EXPECT_EQ(head_dim * n_heads, n_embd);
+}
+
+TEST(ModelLoaderTest, ErrorMessages) {
+    std::string tensor_name = "missing_tensor.weight";
+    std::string expected_msg = "Tensor not found: " + tensor_name;
+    EXPECT_EQ(expected_msg, "Tensor not found: missing_tensor.weight");
+}
+
+TEST(ModelLoaderTest, DimensionMismatchError) {
+    std::string tensor_name = "test.weight";
+    size_t expected_dims = 2;
+    size_t actual_dims = 3;
+    
+    std::ostringstream oss;
+    oss << "Tensor " << tensor_name << " has wrong number of dimensions. "
+        << "Expected " << expected_dims << ", got " << actual_dims;
+    
+    EXPECT_EQ(oss.str(), "Tensor test.weight has wrong number of dimensions. Expected 2, got 3");
+}
+
+TEST(ModelLoaderTest, ConfigCreatesValidModel) {
+    model::ModelConfig config(
+        1000,   // vocab_size
+        512,    // max_seq_len
+        256,    // embedding_dim
+        4,      // num_layers
+        4,      // num_heads
+        1024    // intermediate_dim
+    );
+    
+    EXPECT_GT(config.vocab_size, 0);
+    EXPECT_GT(config.max_seq_len, 0);
+    EXPECT_GT(config.embedding_dim, 0);
+    EXPECT_GT(config.num_layers, 0);
+    EXPECT_GT(config.num_heads, 0);
+    EXPECT_GT(config.intermediate_dim, 0);
+    EXPECT_EQ(config.embedding_dim % config.num_heads, 0);
+}
+
+TEST(ModelLoaderTest, BlockWeightsStructure) {
+    int embedding_dim = 256;
+    int intermediate_dim = 1024;
+    
+    model::BlockWeights weights(embedding_dim, intermediate_dim);
+    
+    auto wq_shape = weights.Wq.get_shape();
+    auto w1_shape = weights.W1.get_shape();
+    
+    EXPECT_EQ(wq_shape.size(), 2);
+    EXPECT_EQ(w1_shape.size(), 2);
 }

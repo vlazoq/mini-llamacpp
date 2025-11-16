@@ -23,6 +23,7 @@ set(SOURCES
     src/tokenizer.cpp
     src/gguf_parser.cpp
     src/quantization.cpp
+    src/model_loader.cpp
 )
 
 
