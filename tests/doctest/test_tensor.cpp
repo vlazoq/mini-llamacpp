@@ -7,6 +7,7 @@
 #include "tensor.h"
 
 #include "gguf_parser.h"
+#include "quantization.h"
 #include <fstream>
 
 // ===== BASIC TENSOR CREATION TESTS =====
@@ -2416,5 +2417,186 @@ TEST_CASE("GGUF Parser - Invalid Files") {
         
         CHECK_THROWS_AS(parser.parse(), std::runtime_error);
         std::remove(temp_file.c_str());
+    }
+}
+
+// ============================================================================
+// Quantization Tests
+// ============================================================================
+
+TEST_CASE("Quantization - FP16 to FP32 Conversion") {
+    SUBCASE("Zero") {
+        uint16_t h = 0x0000;
+        float f = quantization::fp16_to_fp32(h);
+        CHECK(f == 0.0f);
+    }
+    
+    SUBCASE("One") {
+        uint16_t h = 0x3C00;  // 1.0 in fp16
+        float f = quantization::fp16_to_fp32(h);
+        CHECK(f == doctest::Approx(1.0f));
+    }
+    
+    SUBCASE("Negative one") {
+        uint16_t h = 0xBC00;  // -1.0 in fp16
+        float f = quantization::fp16_to_fp32(h);
+        CHECK(f == doctest::Approx(-1.0f));
+    }
+    
+    SUBCASE("Small positive value") {
+        uint16_t h = 0x3800;  // 0.5 in fp16
+        float f = quantization::fp16_to_fp32(h);
+        CHECK(f == doctest::Approx(0.5f));
+    }
+}
+
+TEST_CASE("Quantization - Q4_0 Block Dequantization") {
+    SUBCASE("Simple block") {
+        quantization::block_q4_0 block;
+        block.scale = 0x3C00;  // 1.0 in fp16
+        
+        // Fill with values 0-15 (two per byte)
+        for (int i = 0; i < 16; i++) {
+            block.qs[i] = (i * 2 + 1) << 4 | (i * 2);
+        }
+        
+        float output[quantization::QK4_0];
+        quantization::dequantize_block_q4_0(&block, output);
+        
+        // Values should be centered around 0
+        // 0 -> -8, 1 -> -7, ..., 8 -> 0, ..., 15 -> 7
+        CHECK(output[0] == doctest::Approx(-8.0f));
+        CHECK(output[8] == doctest::Approx(0.0f));
+        CHECK(output[15] == doctest::Approx(7.0f));
+    }
+    
+    SUBCASE("Block with scale") {
+        quantization::block_q4_0 block;
+        block.scale = 0x4000;  // 2.0 in fp16
+        
+        // Middle value (8) should map to 0
+        for (int i = 0; i < 16; i++) {
+            block.qs[i] = 0x88;  // Both values = 8
+        }
+        
+        float output[quantization::QK4_0];
+        quantization::dequantize_block_q4_0(&block, output);
+        
+        // All values should be 0 (8 - 8 = 0, scaled by anything = 0)
+        for (int i = 0; i < quantization::QK4_0; i++) {
+            CHECK(output[i] == doctest::Approx(0.0f));
+        }
+    }
+}
+
+TEST_CASE("Quantization - Q8_0 Block Dequantization") {
+    SUBCASE("Simple block") {
+        quantization::block_q8_0 block;
+        block.scale = 0x3C00;  // 1.0 in fp16
+        
+        // Fill with sequential values
+        for (int i = 0; i < quantization::QK8_0; i++) {
+            block.qs[i] = i - 16;  // -16 to 15
+        }
+        
+        float output[quantization::QK8_0];
+        quantization::dequantize_block_q8_0(&block, output);
+        
+        CHECK(output[0] == doctest::Approx(-16.0f));
+        CHECK(output[16] == doctest::Approx(0.0f));
+        CHECK(output[31] == doctest::Approx(15.0f));
+    }
+    
+    SUBCASE("Block with scale") {
+        quantization::block_q8_0 block;
+        block.scale = 0x4000;  // 2.0 in fp16
+        
+        for (int i = 0; i < quantization::QK8_0; i++) {
+            block.qs[i] = 10;
+        }
+        
+        float output[quantization::QK8_0];
+        quantization::dequantize_block_q8_0(&block, output);
+        
+        // All values should be 10 * 2.0 = 20.0
+        for (int i = 0; i < quantization::QK8_0; i++) {
+            CHECK(output[i] == doctest::Approx(20.0f));
+        }
+    }
+}
+
+TEST_CASE("Quantization - Q4_0 Tensor Dequantization") {
+    SUBCASE("Single block") {
+        std::vector<uint8_t> data(sizeof(quantization::block_q4_0));
+        quantization::block_q4_0* block = reinterpret_cast<quantization::block_q4_0*>(data.data());
+        
+        block->scale = 0x3C00;
+        for (int i = 0; i < 16; i++) {
+            block->qs[i] = 0x88;
+        }
+        
+        Tensor result = quantization::dequantize_q4_0(data, 32);
+        
+        auto shape = result.get_shape();
+        CHECK(shape[0] == 32);
+        CHECK(result.at({0}) == doctest::Approx(0.0f));
+        CHECK(result.at({31}) == doctest::Approx(0.0f));
+    }
+    
+    SUBCASE("Multiple blocks") {
+        size_t n_blocks = 3;
+        std::vector<uint8_t> data(n_blocks * sizeof(quantization::block_q4_0));
+        
+        Tensor result = quantization::dequantize_q4_0(data, 96);
+        auto shape = result.get_shape();
+        CHECK(shape[0] == 96);
+    }
+    
+    SUBCASE("Partial last block") {
+        std::vector<uint8_t> data(sizeof(quantization::block_q4_0));
+        
+        Tensor result = quantization::dequantize_q4_0(data, 20);
+        auto shape = result.get_shape();
+        CHECK(shape[0] == 20);
+    }
+}
+
+TEST_CASE("Quantization - Q8_0 Tensor Dequantization") {
+    SUBCASE("Single block") {
+        std::vector<uint8_t> data(sizeof(quantization::block_q8_0));
+        quantization::block_q8_0* block = reinterpret_cast<quantization::block_q8_0*>(data.data());
+        
+        block->scale = 0x3C00;
+        for (int i = 0; i < 32; i++) {
+            block->qs[i] = 5;
+        }
+        
+        Tensor result = quantization::dequantize_q8_0(data, 32);
+        
+        auto shape = result.get_shape();
+        CHECK(shape[0] == 32);
+        CHECK(result.at({0}) == doctest::Approx(5.0f));
+        CHECK(result.at({31}) == doctest::Approx(5.0f));
+    }
+    
+    SUBCASE("Multiple blocks") {
+        size_t n_blocks = 4;
+        std::vector<uint8_t> data(n_blocks * sizeof(quantization::block_q8_0));
+        
+        Tensor result = quantization::dequantize_q8_0(data, 128);
+        auto shape = result.get_shape();
+        CHECK(shape[0] == 128);
+    }
+}
+
+TEST_CASE("Quantization - Error Handling") {
+    SUBCASE("Insufficient Q4_0 data") {
+        std::vector<uint8_t> data(10);  // Too small
+        CHECK_THROWS_AS(quantization::dequantize_q4_0(data, 32), std::runtime_error);
+    }
+    
+    SUBCASE("Insufficient Q8_0 data") {
+        std::vector<uint8_t> data(10);  // Too small
+        CHECK_THROWS_AS(quantization::dequantize_q8_0(data, 32), std::runtime_error);
     }
 }

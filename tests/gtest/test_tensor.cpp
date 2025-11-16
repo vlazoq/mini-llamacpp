@@ -5,6 +5,7 @@
 #include "tensor.h"
 
 #include "gguf_parser.h"
+#include "quantization.h"
 #include <fstream>
 
 // ===== BASIC TENSOR CREATION TESTS =====
@@ -2284,4 +2285,146 @@ TEST(GGUFParserTest, InvalidFiles) {
         EXPECT_THROW(parser.parse(), std::runtime_error);
         std::remove(temp_file.c_str());
     }
+}
+
+// ============================================================================
+// Quantization Tests
+// ============================================================================
+
+TEST(QuantizationTest, FP16ToFP32Conversion) {
+    uint16_t h_zero = 0x0000;
+    EXPECT_EQ(quantization::fp16_to_fp32(h_zero), 0.0f);
+    
+    uint16_t h_one = 0x3C00;
+    EXPECT_NEAR(quantization::fp16_to_fp32(h_one), 1.0f, 1e-6);
+    
+    uint16_t h_neg_one = 0xBC00;
+    EXPECT_NEAR(quantization::fp16_to_fp32(h_neg_one), -1.0f, 1e-6);
+    
+    uint16_t h_half = 0x3800;
+    EXPECT_NEAR(quantization::fp16_to_fp32(h_half), 0.5f, 1e-6);
+}
+
+TEST(QuantizationTest, Q4_0BlockDequantization) {
+    quantization::block_q4_0 block;
+    block.scale = 0x3C00;
+    
+    for (int i = 0; i < 16; i++) {
+        block.qs[i] = (i * 2 + 1) << 4 | (i * 2);
+    }
+    
+    float output[quantization::QK4_0];
+    quantization::dequantize_block_q4_0(&block, output);
+    
+    EXPECT_NEAR(output[0], -8.0f, 1e-6);
+    EXPECT_NEAR(output[8], 0.0f, 1e-6);
+    EXPECT_NEAR(output[15], 7.0f, 1e-6);
+}
+
+TEST(QuantizationTest, Q4_0BlockWithScale) {
+    quantization::block_q4_0 block;
+    block.scale = 0x4000;
+    
+    for (int i = 0; i < 16; i++) {
+        block.qs[i] = 0x88;
+    }
+    
+    float output[quantization::QK4_0];
+    quantization::dequantize_block_q4_0(&block, output);
+    
+    for (int i = 0; i < quantization::QK4_0; i++) {
+        EXPECT_NEAR(output[i], 0.0f, 1e-6);
+    }
+}
+
+TEST(QuantizationTest, Q8_0BlockDequantization) {
+    quantization::block_q8_0 block;
+    block.scale = 0x3C00;
+    
+    for (int i = 0; i < quantization::QK8_0; i++) {
+        block.qs[i] = i - 16;
+    }
+    
+    float output[quantization::QK8_0];
+    quantization::dequantize_block_q8_0(&block, output);
+    
+    EXPECT_NEAR(output[0], -16.0f, 1e-6);
+    EXPECT_NEAR(output[16], 0.0f, 1e-6);
+    EXPECT_NEAR(output[31], 15.0f, 1e-6);
+}
+
+TEST(QuantizationTest, Q8_0BlockWithScale) {
+    quantization::block_q8_0 block;
+    block.scale = 0x4000;
+    
+    for (int i = 0; i < quantization::QK8_0; i++) {
+        block.qs[i] = 10;
+    }
+    
+    float output[quantization::QK8_0];
+    quantization::dequantize_block_q8_0(&block, output);
+    
+    for (int i = 0; i < quantization::QK8_0; i++) {
+        EXPECT_NEAR(output[i], 20.0f, 1e-6);
+    }
+}
+
+TEST(QuantizationTest, Q4_0TensorSingleBlock) {
+    std::vector<uint8_t> data(sizeof(quantization::block_q4_0));
+    quantization::block_q4_0* block = reinterpret_cast<quantization::block_q4_0*>(data.data());
+    
+    block->scale = 0x3C00;
+    for (int i = 0; i < 16; i++) {
+        block->qs[i] = 0x88;
+    }
+    
+    Tensor result = quantization::dequantize_q4_0(data, 32);
+    
+    auto shape = result.get_shape();
+    EXPECT_EQ(shape[0], 32);
+    EXPECT_NEAR(result.at({0}), 0.0f, 1e-6);
+    EXPECT_NEAR(result.at({31}), 0.0f, 1e-6);
+}
+
+TEST(QuantizationTest, Q4_0TensorMultipleBlocks) {
+    size_t n_blocks = 3;
+    std::vector<uint8_t> data(n_blocks * sizeof(quantization::block_q4_0));
+    
+    Tensor result = quantization::dequantize_q4_0(data, 96);
+    auto shape = result.get_shape();
+    EXPECT_EQ(shape[0], 96);
+}
+
+TEST(QuantizationTest, Q4_0TensorPartialBlock) {
+    std::vector<uint8_t> data(sizeof(quantization::block_q4_0));
+    
+    Tensor result = quantization::dequantize_q4_0(data, 20);
+    auto shape = result.get_shape();
+    EXPECT_EQ(shape[0], 20);
+}
+
+TEST(QuantizationTest, Q8_0TensorSingleBlock) {
+    std::vector<uint8_t> data(sizeof(quantization::block_q8_0));
+    quantization::block_q8_0* block = reinterpret_cast<quantization::block_q8_0*>(data.data());
+    
+    block->scale = 0x3C00;
+    for (int i = 0; i < 32; i++) {
+        block->qs[i] = 5;
+    }
+    
+    Tensor result = quantization::dequantize_q8_0(data, 32);
+    
+    auto shape = result.get_shape();
+    EXPECT_EQ(shape[0], 32);
+    EXPECT_NEAR(result.at({0}), 5.0f, 1e-6);
+    EXPECT_NEAR(result.at({31}), 5.0f, 1e-6);
+}
+
+TEST(QuantizationTest, Q8_0TensorMultipleBlocks) {
+    size_t n_blocks = 4;
+    std::vector<uint8_t> data(n_blocks * sizeof(quantization::block_q8_0));
+    
+    Tensor result = quantization::dequantize_q8_0(data, 128);
+    auto shape = result.get_shape();
+    EXPECT_EQ(shape[0], 128);
 }
